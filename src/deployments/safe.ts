@@ -67,6 +67,8 @@ const CANONICAL_1_4_1: SafeContracts = {
  * nine contracts read with code on 2026-10-09 (`eth_getCode` at each address).
  */
 export const SAFE_CONTRACTS: Readonly<Record<number, SafeContracts>> = {
+  /* BNB Smart Chain (56): all nine read with code on 2026-10-10, both singletons `VERSION() == "1.4.1"`. */
+  56: CANONICAL_1_4_1,
   999: CANONICAL_1_4_1,
   4663: CANONICAL_1_4_1,
   8453: CANONICAL_1_4_1,

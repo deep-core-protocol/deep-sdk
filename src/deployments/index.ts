@@ -470,8 +470,10 @@ export interface DeepCoreDeployment {
    * REDEPLOYABLE. An older build may lack `keyOf`/`hasKey`/`totalTaken` and
    * revert on all three — a reminder that "the hook is deployed" and "the hook
    * has the function you are about to call" are different questions.
+   *
+   * `null` on a chain where it is not deployed.
    */
-  readonly revShareHook: Address;
+  readonly revShareHook: Address | null;
 
   /* -- launchpad ------------------------------------------------------------ */
 
@@ -576,7 +578,7 @@ export interface DeepCoreDeployment {
    * moves in the same edit as the address it describes.
    */
   readonly durationClocks: {
-    readonly revShareHook: DurationClock;
+    readonly revShareHook: DurationClock | null;
     readonly launchpadKit: DurationClock | null;
     readonly launchGuardHook: DurationClock | null;
   };
@@ -615,21 +617,19 @@ export interface DeepCoreDeployment {
  */
 const DEPLOYMENTS_TABLE = {
   /* --------------------------------------------------------------------------
-     EMPTY ON PURPOSE. DeepCore Protocol has not deployed anywhere yet.
-
-     Its first (and, at launch, only) chain is HyperEVM (999). Its record lands
-     here in ONE commit, after the core, periphery, router, registry and kit are
-     deployed and every address is READ BACK off chain (ops/deploy/
-     hyperevm-deploy.md, step 14) — not one commit earlier, and never with a
-     placeholder. Until then `DeepCoreChainId` is `never`, `DEEPCORE_CHAIN_IDS`
-     is empty, and every surface renders "not deployed on this chain".
+     Each record lands here after its chain's contracts are deployed and every
+     address is READ BACK off chain (an address with no code is refused) — never
+     with a placeholder. A contract not deployed on
+     a chain is `null` in that chain's record. HyperEVM (999), BNB (56), Robinhood
+     (4663) and Base (8453) carry the whole release (no RWA hooks), each read back on
+     chain 2026-10-10.
 
      The records that used to live here (Robinhood 4663, Base 8453, Sepolia
      11155111) belonged to the protocol this codebase was forked from. They are
      not DeepCore's and must never be re-added.
      -------------------------------------------------------------------------- */
 
-  /* Written by ops/deploy/tools/make-record.mjs from the broadcast receipts and on-chain reads. */
+  /* Written from the deployment receipts and on-chain reads. */
   999: {
     chainId: 999,
     key: "hyperevm",
@@ -700,6 +700,228 @@ const DEPLOYMENTS_TABLE = {
     tokens: [
       { address: "0x5555555555555555555555555555555555555555", symbol: "WHYPE", name: "Wrapped HYPE", decimals: 18, isTestToken: false },
       { address: "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb", symbol: "USD₮0", name: "USD₮0", decimals: 6, isTestToken: false },
+    ],
+  },
+
+  /* Written from on-chain reads: every address holds code on this chain, and every contract not
+     deployed here is `null`. */
+  56: {
+    chainId: 56,
+    key: "bsc",
+    name: "BNB Smart Chain",
+    explorer: "https://bscscan.com",
+    isMainnet: true,
+    deployedAtBlock: 126765860n,
+    nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+    contractBlockClock: "native",
+    contractBlockTimeCentis: 45,
+    vault: "0x405515DB94aDBF3A827349f2C096809639581D09",
+    clPoolManager: "0xE23978EBBf83Eab3f0226674d1183b5D3ED32FeC",
+    binPoolManager: "0x004a786C4cB79358e2f86467B0eBFD87028648F4",
+    clPoolManagerOwner: "0x115c885f089E9ed4DC6CB011A2474a78CAcfd363",
+    binPoolManagerOwner: "0x5f3628B89ecc263a03ae49b9f45B1dD1c139D57e",
+    feeController: "0x7878BAB23799d3e015998906Ea33327C183e3d78",
+    clProtocolFeeController: null,
+    binProtocolFeeController: null,
+    governanceSafe: "0xeEd90A15348bCAf234733aeB695cA95c0c068c8B",
+    timelockCustody: "0xF7e0DE74b01e82A308BEb5B1376673117e12225C",
+    timelockPolicy: null,
+    safe: SAFE_CONTRACTS[56]!,
+    registry: "0x78789A53D65dfdaa5Bc110d970Dbbd12Edd39378",
+    universalRouter: "0xF480dE4ff93257c18caD36F93E0EeB85A5d5819a",
+    fillRouter: "0x7878624417E9d69219EAdD14bA1B01459C87b578",
+    clPositionManager: "0x2D608934De0684B151261cbdd71A9134bE349F9d",
+    binPositionManager: "0xEC7523d7FC95e335d2629150356C986946538d96",
+    clQuoter: "0x366FbA57a555B351834EC6e5b18301974E1504Ed",
+    binQuoter: "0x0AE000FecFCDfAf6b9f227548f77776E091b93cc",
+    clPositionDescriptor: "0x9675f3Ffe38743D4EfD71BfcF31932645d16B54b",
+    create3Factory: "0x72257921c0dE6db8c9665BB6D8462B709c61Bbf8",
+    permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    weth: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    revShareHook: "0x7878133cE09e979aa333ecAbB19d8c10F8BC7078",
+    launchRegistry: "0x787871D20335808aD72DCAF96FE7b5b7eF616078",
+    launchpadKit: null,
+    launchGuardHook: null,
+    launchpadV2: {
+      launchpadKitV2: "0x78781DC6a34F0dcA85929Db22e04815096aAD378",
+      launchLegs: "0x78783F3AAaB10a84D7FC0a00d243e19467531878",
+      launchTokenFactory: "0x787826056c9A23f2B658f29956C63eCAdA8C0178",
+      clLPLocker: "0x7878cB60Ba330c34ffA027Cdd062696eD9D08878",
+      binLPLocker: "0x7878B240E282026e2318f69966A5e1c44293dc78",
+      clLaunchGuardHook: "0x787888386b536536176aC6E0b0F3f398A929db78",
+      binLaunchGuardHook: "0x787802F88BB73FcF49B3e879A47bDB1C42852178",
+      padFactory: "0x7878647BCeBc138d3Af70a49399C06C5fbFBce78",
+    },
+    launchpadV2Retired: [],
+    launchAndBuy: "0x78785C407A481FA5a68Ae04dd3196d3051214f78",
+    dynamicFeeHook: "0x787824e3C3e0b8FCbDBFd106340cCE27c02Ed678",
+    binDynamicFeeHook: "0x7878Ea1e49E6F9D1d498DCBB99a4C93ddaA95d78",
+    splitFactory: "0x7878E295dF781eB25A941e788695CC58aA715F78",
+    positionLock: "0x7878186b7B906Af641BfB0D9e7aEEB40Ec737778",
+    tokenLock: "0x78787661C6B2D4bdd447456e47304F9E092D8678",
+    multisend: "0x7878D62c54e6C7a073E6114F478774277F595878",
+    dropFactory: "0x7878D474C2797c4C07ef06F848487fEE6aDbCA78",
+    rwa: {
+      marketHoursHook: null,
+      stockPairHook: null,
+      chainlinkPriceBandAdapter: null,
+      allowlistComplianceOracle: null,
+    },
+    durationClocks: { revShareHook: "timestamp", launchpadKit: null, launchGuardHook: null },
+    revShareHooks: [
+      { address: "0x7878133cE09e979aa333ecAbB19d8c10F8BC7078", durationClock: "timestamp", pendingShape: "timestamp-with-expiry", status: "current", note: "First deployment." },
+    ],
+    /* Read on chain: name(), symbol(), decimals(). */
+    tokens: [
+      { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", symbol: "WBNB", name: "Wrapped BNB", decimals: 18, isTestToken: false },
+    ],
+  },
+
+  /* Written from on-chain reads: every address holds code on this chain, and every contract not
+     deployed here is `null`. */
+  4663: {
+    chainId: 4663,
+    key: "robinhood",
+    name: "Robinhood Chain",
+    explorer: "https://robin.etherscan.io",
+    isMainnet: true,
+    deployedAtBlock: 84731752n,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    contractBlockClock: "parent-l1",
+    contractBlockTimeCentis: 1200,
+    vault: "0x405515DB94aDBF3A827349f2C096809639581D09",
+    clPoolManager: "0xE23978EBBf83Eab3f0226674d1183b5D3ED32FeC",
+    binPoolManager: "0x004a786C4cB79358e2f86467B0eBFD87028648F4",
+    clPoolManagerOwner: "0x115c885f089E9ed4DC6CB011A2474a78CAcfd363",
+    binPoolManagerOwner: "0x5f3628B89ecc263a03ae49b9f45B1dD1c139D57e",
+    feeController: "0x7878BAB23799d3e015998906Ea33327C183e3d78",
+    clProtocolFeeController: null,
+    binProtocolFeeController: null,
+    governanceSafe: "0xeEd90A15348bCAf234733aeB695cA95c0c068c8B",
+    timelockCustody: "0xF7e0DE74b01e82A308BEb5B1376673117e12225C",
+    timelockPolicy: null,
+    safe: SAFE_CONTRACTS[4663]!,
+    registry: "0x78789A53D65dfdaa5Bc110d970Dbbd12Edd39378",
+    universalRouter: "0xF480dE4ff93257c18caD36F93E0EeB85A5d5819a",
+    fillRouter: "0x7878624417E9d69219EAdD14bA1B01459C87b578",
+    clPositionManager: "0x2D608934De0684B151261cbdd71A9134bE349F9d",
+    binPositionManager: "0xEC7523d7FC95e335d2629150356C986946538d96",
+    clQuoter: "0x366FbA57a555B351834EC6e5b18301974E1504Ed",
+    binQuoter: "0x0AE000FecFCDfAf6b9f227548f77776E091b93cc",
+    clPositionDescriptor: "0x9675f3Ffe38743D4EfD71BfcF31932645d16B54b",
+    create3Factory: "0x72257921c0dE6db8c9665BB6D8462B709c61Bbf8",
+    permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    weth: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    revShareHook: "0x7878133cE09e979aa333ecAbB19d8c10F8BC7078",
+    launchRegistry: "0x787871D20335808aD72DCAF96FE7b5b7eF616078",
+    launchpadKit: null,
+    launchGuardHook: null,
+    launchpadV2: {
+      launchpadKitV2: "0x78781DC6a34F0dcA85929Db22e04815096aAD378",
+      launchLegs: "0x78783F3AAaB10a84D7FC0a00d243e19467531878",
+      launchTokenFactory: "0x787826056c9A23f2B658f29956C63eCAdA8C0178",
+      clLPLocker: "0x7878cB60Ba330c34ffA027Cdd062696eD9D08878",
+      binLPLocker: "0x7878B240E282026e2318f69966A5e1c44293dc78",
+      clLaunchGuardHook: "0x787888386b536536176aC6E0b0F3f398A929db78",
+      binLaunchGuardHook: "0x787802F88BB73FcF49B3e879A47bDB1C42852178",
+      padFactory: "0x7878647BCeBc138d3Af70a49399C06C5fbFBce78",
+    },
+    launchpadV2Retired: [],
+    launchAndBuy: "0x78785C407A481FA5a68Ae04dd3196d3051214f78",
+    dynamicFeeHook: "0x787824e3C3e0b8FCbDBFd106340cCE27c02Ed678",
+    binDynamicFeeHook: "0x7878Ea1e49E6F9D1d498DCBB99a4C93ddaA95d78",
+    splitFactory: "0x7878E295dF781eB25A941e788695CC58aA715F78",
+    positionLock: "0x7878186b7B906Af641BfB0D9e7aEEB40Ec737778",
+    tokenLock: "0x78787661C6B2D4bdd447456e47304F9E092D8678",
+    multisend: "0x7878D62c54e6C7a073E6114F478774277F595878",
+    dropFactory: "0x7878D474C2797c4C07ef06F848487fEE6aDbCA78",
+    rwa: {
+      marketHoursHook: null,
+      stockPairHook: null,
+      chainlinkPriceBandAdapter: null,
+      allowlistComplianceOracle: null,
+    },
+    durationClocks: { revShareHook: "timestamp", launchpadKit: null, launchGuardHook: null },
+    revShareHooks: [
+      { address: "0x7878133cE09e979aa333ecAbB19d8c10F8BC7078", durationClock: "timestamp", pendingShape: "timestamp-with-expiry", status: "current", note: "First deployment." },
+    ],
+    /* Read on chain: name(), symbol(), decimals(). */
+    tokens: [
+      { address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", symbol: "WETH", name: "WETH", decimals: 18, isTestToken: false },
+    ],
+  },
+
+  /* Written from on-chain reads: every address holds code on this chain, and every contract not
+     deployed here is `null`. */
+  8453: {
+    chainId: 8453,
+    key: "base",
+    name: "Base",
+    explorer: "https://basescan.org",
+    isMainnet: true,
+    deployedAtBlock: 52409451n,
+    nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+    contractBlockClock: "native",
+    contractBlockTimeCentis: 200,
+    vault: "0x405515DB94aDBF3A827349f2C096809639581D09",
+    clPoolManager: "0xE23978EBBf83Eab3f0226674d1183b5D3ED32FeC",
+    binPoolManager: "0x004a786C4cB79358e2f86467B0eBFD87028648F4",
+    clPoolManagerOwner: "0x115c885f089E9ed4DC6CB011A2474a78CAcfd363",
+    binPoolManagerOwner: "0x5f3628B89ecc263a03ae49b9f45B1dD1c139D57e",
+    feeController: "0x7878BAB23799d3e015998906Ea33327C183e3d78",
+    clProtocolFeeController: null,
+    binProtocolFeeController: null,
+    governanceSafe: "0xeEd90A15348bCAf234733aeB695cA95c0c068c8B",
+    timelockCustody: "0x1AdC141Cfe8E0a0e074c7c45898babb3f1DE5256",
+    timelockPolicy: null,
+    safe: SAFE_CONTRACTS[8453]!,
+    registry: "0x78789A53D65dfdaa5Bc110d970Dbbd12Edd39378",
+    universalRouter: "0xF480dE4ff93257c18caD36F93E0EeB85A5d5819a",
+    fillRouter: "0x7878624417E9d69219EAdD14bA1B01459C87b578",
+    clPositionManager: "0x2D608934De0684B151261cbdd71A9134bE349F9d",
+    binPositionManager: "0xEC7523d7FC95e335d2629150356C986946538d96",
+    clQuoter: "0x366FbA57a555B351834EC6e5b18301974E1504Ed",
+    binQuoter: "0x0AE000FecFCDfAf6b9f227548f77776E091b93cc",
+    clPositionDescriptor: "0x9675f3Ffe38743D4EfD71BfcF31932645d16B54b",
+    create3Factory: "0x72257921c0dE6db8c9665BB6D8462B709c61Bbf8",
+    permit2: "0x000000000022D473030F116dDEE9F6B43aC78BA3",
+    weth: "0x4200000000000000000000000000000000000006",
+    revShareHook: "0x7878133cE09e979aa333ecAbB19d8c10F8BC7078",
+    launchRegistry: "0x787871D20335808aD72DCAF96FE7b5b7eF616078",
+    launchpadKit: null,
+    launchGuardHook: null,
+    launchpadV2: {
+      launchpadKitV2: "0x78781DC6a34F0dcA85929Db22e04815096aAD378",
+      launchLegs: "0x78783F3AAaB10a84D7FC0a00d243e19467531878",
+      launchTokenFactory: "0x787826056c9A23f2B658f29956C63eCAdA8C0178",
+      clLPLocker: "0x7878cB60Ba330c34ffA027Cdd062696eD9D08878",
+      binLPLocker: "0x7878B240E282026e2318f69966A5e1c44293dc78",
+      clLaunchGuardHook: "0x787888386b536536176aC6E0b0F3f398A929db78",
+      binLaunchGuardHook: "0x787802F88BB73FcF49B3e879A47bDB1C42852178",
+      padFactory: "0x7878647BCeBc138d3Af70a49399C06C5fbFBce78",
+    },
+    launchpadV2Retired: [],
+    launchAndBuy: "0x78785C407A481FA5a68Ae04dd3196d3051214f78",
+    dynamicFeeHook: "0x787824e3C3e0b8FCbDBFd106340cCE27c02Ed678",
+    binDynamicFeeHook: "0x7878Ea1e49E6F9D1d498DCBB99a4C93ddaA95d78",
+    splitFactory: "0x7878E295dF781eB25A941e788695CC58aA715F78",
+    positionLock: "0x7878186b7B906Af641BfB0D9e7aEEB40Ec737778",
+    tokenLock: "0x78787661C6B2D4bdd447456e47304F9E092D8678",
+    multisend: "0x7878D62c54e6C7a073E6114F478774277F595878",
+    dropFactory: "0x7878D474C2797c4C07ef06F848487fEE6aDbCA78",
+    rwa: {
+      marketHoursHook: null,
+      stockPairHook: null,
+      chainlinkPriceBandAdapter: null,
+      allowlistComplianceOracle: null,
+    },
+    durationClocks: { revShareHook: "timestamp", launchpadKit: null, launchGuardHook: null },
+    revShareHooks: [
+      { address: "0x7878133cE09e979aa333ecAbB19d8c10F8BC7078", durationClock: "timestamp", pendingShape: "timestamp-with-expiry", status: "current", note: "First deployment." },
+    ],
+    /* Read on chain: name(), symbol(), decimals(). */
+    tokens: [
+      { address: "0x4200000000000000000000000000000000000006", symbol: "WETH", name: "Wrapped Ether", decimals: 18, isTestToken: false },
     ],
   },
 } as const;

@@ -7,13 +7,17 @@
 
 <p align="center">
   <a href="https://deepcore.fun">Website</a> ·
-  <a href="https://www.npmjs.com/package/@deepcoreprotocol/sdk">npm</a> ·
+  <a href="https://docs.deepcore.fun">Docs</a> ·
   <a href="https://github.com/deep-core-protocol/deep-sdk">GitHub</a>
 </p>
 
 # @deepcoreprotocol/sdk
 
-TypeScript SDK for **DeepCoreProtocol** — a hooks platform on its own Infinity-architecture core (Vault, CL and Bin pool managers), deployed and verified per chain so launchpads and DEXes can ship on it without deploying an AMM.
+TypeScript SDK for **DeepCore Protocol**: a hooks platform on its own Infinity-architecture core (Vault, CL and Bin pool managers) that Launchpads and DEXes ship on without deploying an AMM.
+
+**Live on HyperEVM · BNB Chain · Robinhood Chain · Base, at the same contract addresses on every
+chain.** Every address ships in this package's address book, written from on-chain read-back.
+MIT. Publication to npm is coming soon; until then, [install from git](#install).
 
 ## Features
 
@@ -21,11 +25,18 @@ DeepCore is one shared liquidity core (a single Vault with concentrated-liquidit
 managers) that Launchpads and DEXes build on instead of deploying their own AMM. The SDK is the
 typed way in:
 
+- **Four chains, one address book.** `DEEPCORE_CHAIN_IDS` is `[999, 56, 4663, 8453]` (HyperEVM, BNB
+  Chain, Robinhood Chain, Base); `getDeployment(id)` returns every contract on that chain, `null`
+  where one is not shipped, and the block to start log scans from.
+- **Cross-chain reads.** A Launchpad or DEX sits at the same address on every chain;
+  `readPadAcrossChains` asks each chain about it and tells "not there" apart from "could not read".
+
 - **Protocol types.** Pool keys and ids, currencies, balance deltas, fees, the hook permission bitmap,
   and typed definitions for every event the contracts emit.
 - **Launches.** Build and validate a token launch on a CL range or a shaped Bin distribution:
-  presets, the opening price, the anti-snipe fee schedule, the optional creator tax and a Launchpad's
-  terms.
+  presets, the opening price from a market cap, the anti-snipe fee schedule (up to 50% on CL, 10% on
+  Bin, decaying over at least 60 seconds), the optional creator tax (up to 10%, expiring on its own)
+  and a Launchpad's terms, then simulate the exact bytes before sending.
 - **Launchpads and DEXes.** Read and write the on-chain owner, name and brand of a Launchpad or DEX
   created through `DeepCorePadFactory`.
 - **Market reads.** Trades, candles, holders, the pool directory and spot price, from logs and
@@ -35,8 +46,10 @@ typed way in:
 - **Utilities.** Liquidity locks, token locks and vesting, multisend, Merkle airdrops and team splits.
 - **Registry and trust.** What the on-chain registry records about a hook, rendered without implying
   an audit.
-- **Chains.** Public endpoints per chain with a failover transport, and a reader for the clock the
-  contracts actually see.
+- **Chains.** Public endpoints per chain with a failover transport, measured `eth_getLogs` range
+  limits per endpoint, and a reader for the clock the contracts actually see.
+- **Routing.** Quotes and calldata for the router: DeepCore pools pay no router fee, a fill routed to
+  another venue pays the fee `DeepCoreFillRouter.feeBps()` reports (0.15% today).
 
 ### Modules
 
@@ -71,98 +84,63 @@ You can build a hook, an indexer or a front end on this SDK under MIT terms. Dep
 
 ## Launching a token
 
-> This section documents the block-numbered v1 `LaunchpadKit`. No chain in the address book
-> carries one, so `requireContract(d, "launchpadKit")` throws; current launches go through
-> Kit v2 (`launchpadV2.launchpadKitV2`).
-
-`LaunchpadKit.createLaunch` does the whole launch in one transaction — pool, anti-sniper fee
-schedule, seeded liquidity, registry listing. The SDK ships the three things that call needs
-and that are dangerous to hand-roll.
+`LaunchpadKitV2.createLaunch` opens a launch in one transaction: the token, the pool, the anti-snipe
+schedule, the seeded liquidity (locked forever) and the registry listing. This is the docs'
+Quickstart, compiled against the SDK in its test suite (`provider` is your wallet's EIP-1193
+provider):
 
 ```ts
-import {
-  sqrtPriceForLaunch, buildLaunchParams, validateLaunchParams, describeLaunch,
-  getDeployment, requireContract, PRESET,
-} from "@deepcoreprotocol/sdk"
+import { createPublicClient, createWalletClient, custom, parseUnits, toHex } from "viem";
+import { LAUNCH_TOKEN_DECIMALS, NATIVE_ADDRESS, PRESET, buildLaunchV2, deepcoreTransport, readKitV2Limits, requireDeployment, requireLaunchpadV2 } from "@deepcoreprotocol/sdk";
 
-const d = getDeployment(chainId)   // undefined on a chain DeepCore is not deployed on
-if (!d) throw new Error(`DeepCore is not deployed on chain ${chainId}`)
-const kit = requireContract(d, "launchpadKit")
+const chainId = 999; // or 56, 4663, 8453: the kit has the same address on each
+const kit = requireLaunchpadV2(requireDeployment(chainId)).launchpadKitV2;
+const client = createPublicClient({ transport: deepcoreTransport(chainId) });
+const wallet = createWalletClient({ transport: custom(provider) });
+const [me] = await wallet.requestAddresses();
+if (me === undefined) throw new Error("connect a wallet");
 
-// 1. The price. Handles address sorting AND decimals — both are silent traps.
-const price = sqrtPriceForLaunch({
-  launchToken: myToken,
-  quoteToken: usdg.address,
-  launchDecimals: 18,
-  quoteDecimals: 6,              // NOT 18. Read it off the contract.
-  quotePerLaunchToken: "0.05",   // a STRING; floats lose the digits that matter
-})
-console.log(price.poolPrice, price.launchTokenIsCurrency0)  // check before you sign
+const supply = parseUnits("1000000000", LAUNCH_TOKEN_DECIMALS);
+const limits = await readKitV2Limits(client, kit);
+const launch = await buildLaunchV2(client, kit, {
+  name: "[NAME]", symbol: "[SYMBOL]", metadataURI: "",
+  totalSupply: supply, seedSupply: supply, allocationRecipient: NATIVE_ADDRESS,
+  creator: me, operator: me, steward: me, launcher: me,
+  protocolBps: limits.locker.minProtocolBps,
+  schedule: { preset: PRESET.FairLaunch, initialFeeBips: 100_000, finalFeeBips: 3_000, decaySeconds: 300, startDelaySeconds: 0 },
+  legs: [{
+    kind: "CL", quote: NATIVE_ADDRESS, quoteDecimals: 18, weightBps: 10_000,
+    quotePerLaunchToken: "[PRICE]", maxBuyPerTx: 0n, tickSpacing: 60, widthInSpacings: 200,
+    binStep: 100, shape: "Linear", binCount: 10,
+  }],
+  listing: { description: "", websiteURI: "", xHandle: "", telegramHandle: "" },
+  userSalt: toHex(crypto.getRandomValues(new Uint8Array(32))),
+}, limits);
 
-// 2. The params. `preset` has no default, on purpose.
-const params = buildLaunchParams({
-  launchToken: myToken, quoteToken: usdg.address,
-  tickSpacing: 60, sqrtPriceX96: price.sqrtPriceX96,
-  preset: "FairLaunch", seed, startDelaySeconds: 3600,
-})
-
-// 3. Every objection, before a wallet is opened. blockTimeCentis comes off the kit;
-//    contractBlockTimeCentis is the chain's REAL block.number cadence, from the address book.
-const { contractBlockTimeCentis } = d
-const limits = { blockTimeCentis, contractBlockTimeCentis, maxDecayBlocks, maxStartDelayBlocks }
-const issues = validateLaunchParams(params, limits)
-console.log(describeLaunch(params, limits).decayWindow)
-// A kit declaring 10 centis on a chain whose block.number advances every 12 s reads "10h" here,
-// with declaredDecayWindow "5m" and clockStretch 120.
+const errors = launch.issues.filter((i) => i.severity === "error");
+if (errors.length > 0) throw new Error(errors.map((i) => `${i.field}: ${i.message}`).join("\n"));
+await client.call({ account: me, to: launch.to, data: launch.data, value: launch.value });
+const hash = await wallet.sendTransaction({ account: me, chain: null, to: launch.to, data: launch.data, value: launch.value });
+console.log(`token ${launch.token} · tx ${hash}`);
 ```
+
+`buildLaunchV2` takes the kit's limits, predicts the token address, snaps
+the opening price to the pool's grid and returns every objection as an `issue` before a wallet is
+opened; `client.call` simulates the exact bytes before they are sent. Every duration in the kit
+and the guards is `block.timestamp`, in seconds.
 
 ### Two block clocks
 
-On an Arbitrum Nitro chain — Robinhood Chain is one — `block.number` inside the EVM is
-Ethereum's block number (~12 s), while `eth_blockNumber` is the L2 block (~0.1 s). Every block
-number a DeepCore contract stores (`effectiveBlock`, `expiryBlock`, `startBlock`) is on the EVM
-clock. Compare them against `readContractBlockNumber(client, chainId)`, never against
-`getBlockNumber()`, and convert block counts to time with `contractBlocksToSeconds`. Keep
-`getBlockNumber()` for `eth_getLogs` ranges, which are L2.
+On an Arbitrum Nitro chain (Robinhood Chain is one) `block.number` inside the EVM is Ethereum's
+block number, while `eth_blockNumber` is the L2 block. Compare any block number a contract stores
+against `readContractBlockNumber(client, chainId)`, never against `getBlockNumber()`; keep
+`getBlockNumber()` for `eth_getLogs` ranges, which are on the L2 clock.
 
 ```ts
 const clock = await readContractClock(publicClient, chainId)
-clock.contractBlockNumber   // the EVM's block.number, what a hook compares against
+clock.contractBlockNumber   // the EVM's block.number
 clock.rpcBlockNumber        // eth_blockNumber, the log clock (equal on a "native" chain)
 ```
-
-HyperEVM (999) is a `native` chain: `block.number` is its own block number (~1 s blocks).
-
-### Three traps these close
-
-**`sqrtPriceX96` is a ratio of RAW units.** USDG is 6 decimals and WETH is 18, so a price
-computed as though both were 18 is wrong by 10¹² — a pool opened at a million times the
-intended price, fixed permanently at `initialize`. `sqrtPriceForLaunch` takes the decimals as
-required arguments and computes in bigint throughout; nothing converts through a float.
-
-**Address sorting silently inverts a price.** `currency0` is the lower address, which has
-nothing to do with which token you think of as the price. If your launch token sorts second
-the pool holds the reciprocal. The returned `launchTokenIsCurrency0` and `poolPrice` are there
-to be shown to a human before broadcasting.
-
-**`Preset.Custom` is the zero value.** An unset field, a `?? 0`, a struct built from `{}` — all
-of them mean Custom, and Custom then reads a fee schedule the caller never filled in. The chain
-accepts it. You get a launch with no anti-sniper protection and no error anywhere.
-`buildLaunchParams` refuses Custom without a schedule, and `validateLaunchParams` reports an
-all-zero Custom as an error rather than a default.
-
-### What is deliberately not here
-
-`MAX_DECAY_BLOCKS` and `MAX_START_DELAY` are immutables set per deployment from the chain's
-real block time — read them off the hook and pass them in. Hardcoding them is the twelve-second
-assumption that made them immutable in the first place. Likewise `blockTimeCentis`: read it
-from the kit — it is what the kit USES, not what the chain does. A kit that declares `10`
-(0.10 s) on a Nitro chain, where its hook's `block.number` advances every ~12 s, resolves every
-window 120x longer than the seconds it was given. `contractBlockTimeCentis` is the real figure.
-
-`PRESET_PARAMS` mirrors the Solidity so a UI can render a schedule without an RPC call, and a
-test reads `LaunchPresets.sol` and asserts every field. The chain is still the authority:
-call `previewSchedule` on the deployed kit before you broadcast.
 
 ---
 
@@ -295,9 +273,7 @@ check in code, because a sentence in a README goes stale the day something ships
 ## Install
 
 ```bash
-# Not published to npm yet — this 404s today:
-#   npm install @deepcoreprotocol/sdk
-# Install from git until it is:
+# On npm soon as @deepcoreprotocol/sdk. Until then, install from git:
 npm install github:deep-core-protocol/deep-sdk
 ```
 
@@ -318,7 +294,7 @@ Requires Node 20+ and TypeScript 5.x. The package is ESM-only with `"strict": tr
 Every deployed DeepCore contract ships with the package. You should never have to hand-type one.
 
 ```ts
-import { DEEPCORE_DEPLOYMENTS, DEEPCORE_CHAIN_IDS, getDeployment, tokenBySymbol } from "@deepcoreprotocol/sdk";
+import { DEEPCORE_DEPLOYMENTS, DEEPCORE_CHAIN_IDS, explorerAddressUrl, getDeployment, tokenBySymbol } from "@deepcoreprotocol/sdk";
 // or, tree-shaking only this:
 // import { ... } from "@deepcoreprotocol/sdk/deployments";
 
@@ -328,6 +304,11 @@ if (deepcore) {
   deepcore.clPoolManager;
   deepcore.universalRouter;
   deepcore.deployedAtBlock;                    // start log scans here, not at genesis
+}
+
+for (const id of DEEPCORE_CHAIN_IDS) {         // 999, 56, 4663, 8453
+  const d = getDeployment(id)!;
+  console.log(d.name, d.vault, explorerAddressUrl(id, d.vault));
 }
 ```
 
@@ -662,13 +643,14 @@ The bitmap offsets, the `parameters` layout and the dependency rules were read f
 | | |
 |---|---|
 | Website | <https://deepcore.fun> |
-| Package | <https://www.npmjs.com/package/@deepcoreprotocol/sdk> |
+| Docs | <https://docs.deepcore.fun> |
+| Package | `@deepcoreprotocol/sdk` on npm (soon) |
 | Source | <https://github.com/deep-core-protocol/deep-sdk> |
 | Contracts | <https://github.com/deep-core-protocol/contracts> |
 | Org | <https://github.com/deep-core-protocol> |
 
-Issues and pull requests belong on the mirror repo above. Note that `src/`,
-`scripts/` and `assets/` there are **generated output** — they are
+Issues and pull requests belong on the mirror repo above. Note that `src/`
+and `scripts/` there are **generated output** — they are
 overwritten wholesale on every sync from the monorepo, so a patch applied
 directly to those directories is lost on the next release. Open an issue and
 the change is made upstream.

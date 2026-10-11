@@ -65,13 +65,13 @@ const DEST =
     : join(homedir(), '.deepcore', 'public', 'deep-sdk')
 
 /** Copied verbatim. Anything not named here does not travel.
- *  `assets` holds the repo's social-preview image, which the README embeds.
- *  It is NOT in package.json `files`, so it never enters the npm tarball —
- *  a 90 KB PNG has no business in a dependency.
+ *  `assets/` (gitignored) does NOT travel: it holds the previous identity's art. The README's
+ *  banner is the mirror's own `.github/assets/og-image-1200x630.png`, which this script never
+ *  touches.
  *  `prompts` (the paste-into-an-agent integration prompts) is HELD BACK: they still describe the
  *  first, block-denominated launch kit, and a public prompt that teaches an agent the wrong kit
  *  is worse than none. Add it back here once they are rewritten for Kit v2. */
-const INCLUDE_DIRS = ['src', 'scripts', 'assets']
+const INCLUDE_DIRS = ['src', 'scripts']
 const INCLUDE_FILES = [
   'package.json',
   'package-lock.json',

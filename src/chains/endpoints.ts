@@ -793,13 +793,24 @@ export function isLocalRpcUrl(url: string): boolean {
  * failover only moves on after an error. Re-probe before adding anything.
  */
 export const LOG_RANGE_ENDPOINTS: Readonly<Record<number, readonly string[]>> = {
-  /* HyperEVM, 2026-09-19 (ops/deploy/hyperevm-deploy.md section 0.1). Hyperliquid's own RPC
+  /* HyperEVM, 2026-09-19. Hyperliquid's own RPC
      serves "up to 50 blocks in query range" and rate-limited a 10,000-block query (-32005).
      rpc.purroofgroup.com served 100,000-block windows (100,001 -> "query exceeds max block
      range 100000"); rpc.hypurrscan.io 1,000 ("Response is too big" on a busy token);
      hyperliquid.drpc.org refused 1,000 with HTTP 400. purroofgroup is the only public
      endpoint serving more than 1,000-block windows, so it goes first for logs. */
   999: ["https://rpc.purroofgroup.com"],
+  /* BNB, 2026-10-10/11: 56.rpc.thirdweb.com is the only public endpoint that serves logs at all
+     (the bsc-dataseed endpoints refuse every range with -32005 "limit exceeded"). Already first
+     by latency, so this row pins the order rather than changing it. */
+  56: ["https://56.rpc.thirdweb.com"],
+  /* Robinhood, 2026-10-10/11: the official RPC served 10,000,000-block windows and refused
+     20,000,000 ("only 10000000 are allowed"); the others refuse past 10,000. Already first. */
+  4663: ["https://rpc.mainnet.chain.robinhood.com"],
+  /* Base, 2026-10-11: 8453.rpc.thirdweb.com serves 1,000 blocks back to the deployment block;
+     base.drpc.org (free plan) and blastapi refuse any useful range, mainnet.base.org answered
+     "request limit reached". Already first by latency. */
+  8453: ["https://8453.rpc.thirdweb.com"],
 };
 
 /**
@@ -818,11 +829,18 @@ export const LOG_RANGE_ENDPOINTS: Readonly<Record<number, readonly string[]>> = 
  * copy of the same numbers in `packages/keeper/src/config.ts` — keep the two equal.
  */
 export const LOG_RANGE_LIMITS: Readonly<Record<string, number>> = {
-  /* HyperEVM, 2026-09-19 (ops/deploy/hyperevm-deploy.md section 0.1): 100,001 blocks answered
+  /* HyperEVM, 2026-09-19: 100,001 blocks answered
      "query exceeds max block range 100000"; Hyperliquid's own RPC documents "up to 50 blocks in
      query range" and answered -32005 "rate limited" to a 10,000-block query. */
   "https://rpc.purroofgroup.com": 100_000,
   "https://rpc.hyperliquid.xyz/evm": 50,
+  /* BNB and Base, 2026-10-11: thirdweb answered 1,001 blocks and refused 1,002 with -32005
+     "Maximum allowed number of requested blocks is 1000"; 1,000 is its stated limit. */
+  "https://56.rpc.thirdweb.com": 1_000,
+  "https://8453.rpc.thirdweb.com": 1_000,
+  /* Robinhood, 2026-10-11: the official RPC answered 10,000,002 blocks and refused 20,000,000
+     with -32602 "only 10000000 are allowed"; 10,000,000 is its stated limit. */
+  "https://rpc.mainnet.chain.robinhood.com": 10_000_000,
 };
 
 /**

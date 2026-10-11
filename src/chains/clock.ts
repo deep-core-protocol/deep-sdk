@@ -106,8 +106,7 @@ export const CONTRACT_CLOCK_PROBE_CALLDATA: Hex = "0x436000524260205260406000f3"
  * L2 is not evidence of either clock. A Nitro chain shows contracts its parent
  * chain's number; an OP-stack chain shows its own.
  *
- * - **999 HyperEVM** — `native`, 1.0 s. Read 2026-09-19 (ops/deploy/hyperevm-deploy.md
- *   section 0.1): the `NUMBER` probe returned 46,290,513 in the same second
+ * - **999 HyperEVM** — `native`, 1.0 s. Read 2026-09-19: the `NUMBER` probe returned 46,290,513 in the same second
  *   `eth_blockNumber` returned 46,290,513, so the EVM's `block.number` IS the
  *   chain's own (small blocks; the certification run measured 0.99 s per block
  *   over 150 s). HyperCore's L1 block counter is a third, unrelated number.
