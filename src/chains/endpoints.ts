@@ -290,6 +290,15 @@ export const CHAIN_RPCS = {
    *                                 shipped on one clean run after a history of
    *                                 half-answers. Promote it on the next green probe.
    * The two `wss://` endpoints are out of scope: the transports here are http.
+   *
+   * Changes on 2026-10-11 (probe in apps/web/src/lib/browserRpc.ts's header):
+   *   − `rpc.ordofi.network` — answers EVERY call (eth_call, eth_getLogs, 1 in 10 eth_blockNumber)
+   *     with `-32005 "the network is busy, please try again in a moment"` as an HTTP 200, after
+   *     ~2.7 s. It was second in this list, so every read that fell past the canonical endpoint
+   *     paid it. Removed; re-probe before bringing it back.
+   *   + `robinhood.drpc.org` — promoted on its second green probe: chain id, reads, eth_call at
+   *     a pinned block (timestamp matches the header: the block tag is honoured), eth_getLogs over
+   *     1,000 blocks, 10/10 on a burst; its free plan refuses log ranges over 10,000 blocks.
    */
   robinhood: {
     chainId: 4663,
@@ -303,8 +312,8 @@ export const CHAIN_RPCS = {
        gone entirely — it 403s now. */
     endpoints: [
       { url: 'https://rpc.mainnet.chain.robinhood.com', latencyMs: 108, eip1153: true },
-      { url: 'https://rpc.ordofi.network', latencyMs: 51, eip1153: true },
       { url: 'https://robinhood.rpc.blxrbdn.com', latencyMs: 81, eip1153: true },
+      { url: 'https://robinhood.drpc.org', latencyMs: 125, eip1153: true },
       { url: 'https://robinhood-rpc.publicnode.com', latencyMs: 122, eip1153: true },
       { url: 'https://rpc-robinhood.blockmachine.io', latencyMs: 205, eip1153: true },
     ],

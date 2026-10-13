@@ -568,6 +568,19 @@ const SOURCES = [
       error: null,
     },
   },
+  {
+    constant: "DEEPCORE_LAUNCH_AND_BUY_ABI",
+    doc:
+      "`DeepCoreLaunchAndBuy` - a `LaunchpadKitV2.createLaunch` and the creator's first buy on one of its legs, in one " +
+      "transaction. No owner; the launch reverts with the buy.",
+    contract: "DeepCoreLaunchAndBuy",
+    artifact: join(REPO_PACKAGES, "launch-periphery", "foundry-out", "DeepCoreLaunchAndBuy.sol", "DeepCoreLaunchAndBuy.json"),
+    keep: {
+      function: ["launchAndBuy", "predictLaunchToken", "previewOpeningFee", "KIT", "VAULT"],
+      event: ["LaunchAndBuyExecuted"],
+      error: null,
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------

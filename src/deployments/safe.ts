@@ -1,23 +1,40 @@
 // SPDX-License-Identifier: MIT
 /* ============================================================================
-   Safe{Wallet} v1.4.1 contract addresses, per chain.
+   Safe{Wallet} contract addresses, per chain and per version.
 
-   The governance Safe (`DeepCoreDeployment.governanceSafe`) is a plain v1.4.1
-   proxy created through the canonical `SafeProxyFactory`, and every chain DeepCore
-   governs must be one where the canonical singleton deployment landed at the same
+   The governance Safe (`DeepCoreDeployment.governanceSafe`) is a proxy created
+   through the canonical `SafeProxyFactory`, and every chain DeepCore governs
+   must be one where the canonical singleton deployments landed at the same
    deterministic addresses. That is what lets a Safe transaction be hashed,
    signed and executed WITHOUT app.safe.global: the EIP-712 domain is
-   `{ chainId, verifyingContract: safe }`, and a batch is a DELEGATECALL into
-   `multiSendCallOnly`, which can only CALL onward.
+   `{ chainId, verifyingContract: safe }` for every Safe >= 1.3.0, and a batch
+   is a DELEGATECALL into `multiSendCallOnly`, which can only CALL onward.
 
-   Every value below is the canonical v1.4.1 address published by
+   TWO VERSIONS ARE RECORDED, and they are different things:
+
+     - `SAFE_CONTRACTS` (v1.4.1) is the set the BATCH TARGET comes from.
+       `buildSafeTx` and the API's signing room (`apps/api/src/admin/safeRoom.ts`)
+       delegate a multi-call proposal into `SAFE_CONTRACTS[chain].multiSendCallOnly`,
+       and the admin console (`apps/admin/src/lib/safeContracts.ts`) verifies that
+       the target is a PUBLISHED MultiSendCallOnly with code before it hashes.
+       The library is stateless and version-independent in what it does, so a
+       1.5.0 Safe delegating into the 1.4.1 library is fine; what matters is that
+       both halves name the SAME address, or every batch reads "DISAGREE".
+       Do not move the batch target without changing both halves together.
+
+     - `SAFE_CONTRACTS_1_5_0` is the set the governance Safe of record IS: its
+       proxy points at the v1.5.0 `SafeL2` and the v1.5.0
+       `CompatibilityFallbackHandler` (read on chain 2026-10-11, facts in the
+       admin file above). Readers that must say which singleton a Safe runs
+       (`safeContractsForVersion`) take it from here.
+
+   Every value below is the canonical address published by
    `@safe-global/safe-deployments` (MIT), transcribed rather than imported so the
-   SDK stays dependency-free. `docs/chain-certification.md` records `eth_getCode`
-   and `VERSION()` reads at these addresses on each chain; `test/safeContracts.test.ts`
-   re-reads the code when an RPC is reachable and asserts the transcription
-   against the published package in the admin build. A chain missing from this
-   table has NOT been checked — do not add it on the strength of "the canonical
-   deployment is everywhere". Read the code first.
+   SDK stays dependency-free. `test/safeContracts.test.ts` re-reads the code when
+   an RPC is reachable and asserts the transcription against the published package
+   in the admin build. A chain missing from a table has NOT been checked — do not
+   add it on the strength of "the canonical deployment is everywhere". Read the
+   code first.
 
    Which singleton a given Safe proxy points at (L1 `singleton` or `l2Singleton`)
    is read from the proxy's storage slot 0 at run time; both are listed because
@@ -26,9 +43,13 @@
 
 import type { Address } from "viem";
 
+/** The Safe versions this SDK records addresses for. */
+export type SafeVersion = "1.4.1" | "1.5.0";
+export const SAFE_VERSIONS: readonly SafeVersion[] = ["1.4.1", "1.5.0"];
+
 export interface SafeContracts {
-  /** Safe version these addresses belong to. Only 1.4.1 is recorded. */
-  readonly version: "1.4.1";
+  /** Safe version these addresses belong to. */
+  readonly version: SafeVersion;
   /** `Safe.sol` — the L1 singleton. */
   readonly singleton: Address;
   /** `SafeL2.sol` — emits events for indexers without tracing; what Safe{Wallet} deploys on L2s. */
@@ -60,11 +81,39 @@ const CANONICAL_1_4_1: SafeContracts = {
 };
 
 /**
+ * The canonical v1.5.0 deployment (`@safe-global/safe-deployments` 1.37.63, `released: true`),
+ * the same addresses on every chain below.
+ *
+ * READ ON CHAIN 2026-10-12 (`cast code`, public RPCs: 999 rpc.hyperliquid.xyz/evm at block
+ * 48,331,146 · 56 bsc-dataseed1.defibit.io at 127,182,911 · 4663 rpc.mainnet.chain.robinhood.com
+ * at 86,550,811 · 8453 mainnet.base.org at 52,503,085): on all four, Safe 21,451 bytes ·
+ * SafeL2 22,231 · SafeProxyFactory 3,321 · MultiSend 640 · MultiSendCallOnly 421 ·
+ * CompatibilityFallbackHandler 6,294 · SignMessageLib 966 · CreateCall 1,099 ·
+ * SimulateTxAccessor 850; the SafeL2 answers `VERSION() == "1.5.0"`. The governance Safe
+ * `0xeEd9…8c8B` points at this SafeL2 and this fallback handler on all four chains
+ * (apps/admin/src/lib/safeContracts.ts, 2026-10-11).
+ */
+const CANONICAL_1_5_0: SafeContracts = {
+  version: "1.5.0",
+  singleton: "0xFf51A5898e281Db6DfC7855790607438dF2ca44b",
+  l2Singleton: "0xEdd160fEBBD92E350D4D398fb636302fccd67C7e",
+  proxyFactory: "0x14F2982D601c9458F93bd70B218933A6f8165e7b",
+  multiSend: "0x218543288004CD07832472D464648173c77D7eB7",
+  multiSendCallOnly: "0xA83c336B20401Af773B6219BA5027174338D1836",
+  fallbackHandler: "0x3EfCBb83A4A7AfcB4F68D501E2c2203a38be77f4",
+  signMessageLib: "0x4FfeF8222648872B3dE295Ba1e49110E61f5b5aa",
+  createCall: "0x2Ef5ECfbea521449E4De05EDB1ce63B75eDA90B4",
+  simulateTxAccessor: "0x07EfA797c55B5DdE3698d876b277aBb6B893654C",
+};
+
+/**
  * Chains where the canonical v1.4.1 contracts were READ at these addresses
  * (`docs/chain-certification.md`, "Safe infra"): code present, singletons answer
  * `VERSION() == "1.4.1"`. This is third-party Safe infrastructure; a chain listed
  * here says nothing about whether DeepCore is deployed on it. HyperEVM (999): all
  * nine contracts read with code on 2026-10-09 (`eth_getCode` at each address).
+ *
+ * THIS IS THE BATCH-TARGET SET (`DeepCoreDeployment.safe`): see the header.
  */
 export const SAFE_CONTRACTS: Readonly<Record<number, SafeContracts>> = {
   /* BNB Smart Chain (56): all nine read with code on 2026-10-10, both singletons `VERSION() == "1.4.1"`. */
@@ -75,8 +124,21 @@ export const SAFE_CONTRACTS: Readonly<Record<number, SafeContracts>> = {
   11155111: CANONICAL_1_4_1,
 };
 
-export const SAFE_CONTRACT_CHAIN_IDS: readonly number[] = Object.keys(SAFE_CONTRACTS).map(Number);
+/**
+ * Chains where every canonical v1.5.0 contract was read with code (2026-10-12, sizes in the
+ * constant's note). Sepolia is NOT listed: its 1.5.0 set has not been read.
+ */
+export const SAFE_CONTRACTS_1_5_0: Readonly<Record<number, SafeContracts>> = {
+  56: CANONICAL_1_5_0,
+  999: CANONICAL_1_5_0,
+  4663: CANONICAL_1_5_0,
+  8453: CANONICAL_1_5_0,
+};
 
+export const SAFE_CONTRACT_CHAIN_IDS: readonly number[] = Object.keys(SAFE_CONTRACTS).map(Number);
+export const SAFE_CONTRACT_1_5_0_CHAIN_IDS: readonly number[] = Object.keys(SAFE_CONTRACTS_1_5_0).map(Number);
+
+/** The v1.4.1 (batch-target) set for a chain, or `undefined` where it has not been verified. */
 export function safeContractsFor(chainId: number): SafeContracts | undefined {
   return SAFE_CONTRACTS[chainId];
 }
@@ -88,8 +150,33 @@ export function requireSafeContracts(chainId: number): SafeContracts {
 }
 
 /**
- * Safe v1.4.1 EIP-712 `SafeTx` type. The domain is `{ chainId, verifyingContract }`
- * (no name, no version) for every Safe >= 1.3.0. `safeTxHash` is
+ * The verified set for ONE Safe version on a chain, or `undefined` where that version has not
+ * been read there. Pass the proxy's own `VERSION()`; a version outside `SafeVersion` is a Safe
+ * this SDK records nothing for, which a caller reports rather than guesses around.
+ */
+export function safeContractsForVersion(chainId: number, version: string): SafeContracts | undefined {
+  if (version === "1.4.1") return SAFE_CONTRACTS[chainId];
+  if (version === "1.5.0") return SAFE_CONTRACTS_1_5_0[chainId];
+  return undefined;
+}
+
+/**
+ * Every published `MultiSendCallOnly` this SDK knows on a chain (any recorded version): the set a
+ * governance batch's DELEGATECALL target must belong to. The first entry is the batch target
+ * `buildSafeTx` is given today (v1.4.1).
+ */
+export function publishedMultiSendCallOnly(chainId: number): readonly Address[] {
+  const out: Address[] = [];
+  for (const table of [SAFE_CONTRACTS, SAFE_CONTRACTS_1_5_0]) {
+    const c = table[chainId];
+    if (c && !out.some((a) => a.toLowerCase() === c.multiSendCallOnly.toLowerCase())) out.push(c.multiSendCallOnly);
+  }
+  return out;
+}
+
+/**
+ * Safe EIP-712 `SafeTx` type (1.3.0 and later, 1.4.1 and 1.5.0 included). The domain is
+ * `{ chainId, verifyingContract }` (no name, no version). `safeTxHash` is
  * `hashTypedData({ domain, types: SAFE_TX_TYPES, primaryType: "SafeTx", message })`,
  * and it is what an owner's `eth_signTypedData_v4` signs and what
  * `execTransaction` recovers each signature against.

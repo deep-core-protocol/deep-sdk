@@ -35,11 +35,14 @@ export const IPFS_CODEC_DAG_PB = 0x70;
 export const MULTIHASH_SHA2_256 = 0x12;
 
 /**
- * Public path gateways, tried in order. A deployment with its own gateway
- * prepends it (`ipfsGateways({ own })`); nothing outside this list is ever
- * fetched, and no URI can add to it.
+ * Path gateways, tried in order: DeepCore's own gateway first (it serves
+ * browser fetches with CORS; dweb.link and ipfs.io began refusing them in
+ * 2026-10), then the public pair as fallbacks. A deployment with yet another
+ * gateway prepends it (`ipfsGateways({ own })`); nothing outside this list is
+ * ever fetched, and no URI can add to it. Every answer is still re-hashed
+ * against its CID (`verifyRawCid`), so no gateway on the list is trusted.
  */
-export const IPFS_GATEWAYS: readonly string[] = ["https://dweb.link/ipfs/", "https://ipfs.io/ipfs/"];
+export const IPFS_GATEWAYS: readonly string[] = ["https://ipfs.deepcore.fun/ipfs/", "https://dweb.link/ipfs/", "https://ipfs.io/ipfs/"];
 
 /** Environment key an app may set to put its own gateway first (`VITE_`/`DEEPCORE_` prefixed by the host app). */
 export const IPFS_GATEWAY_ENV = "DEEPCORE_IPFS_GATEWAY";

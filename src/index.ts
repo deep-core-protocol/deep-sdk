@@ -348,6 +348,17 @@ export {
   buildLaunchParamsV2,
   buildLaunchV2,
   encodeCreateLaunchV2,
+  /* The creator's first buy in the launch transaction (`DeepCoreLaunchAndBuy`): the launch as
+     `buildLaunchV2` builds it, the token predicted through the contract, the buy's bounds. */
+  DEEPCORE_LAUNCH_AND_BUY_ABI,
+  buildLaunchAndBuyV2,
+  encodeLaunchAndBuyV2,
+  decodeLaunchAndBuyResult,
+  openingFeePips,
+  type BuiltLaunchAndBuyV2,
+  type LaunchAndBuyOutcome,
+  type LaunchBuyDraftV2,
+  type LaunchBuyParamsV2,
   /* The registry listing (`LaunchMetadata`, four strings): the handle rules the
      registry enforces, mirrored so a form fails locally, and the one URL each
      handle renders to. */
@@ -624,15 +635,21 @@ export {
   tokenByAddress,
   tokenBySymbol,
   /**
-   * Safe v1.4.1 contract addresses per chain and the `SafeTx` EIP-712 type —
-   * what a signing room needs to hash, sign and execute a governance Safe
-   * transaction without app.safe.global. See `deployments/safe.ts`.
+   * Safe contract addresses per chain — v1.4.1 (the batch-target set `buildSafeTx`
+   * uses) and v1.5.0 (what the governance Safe of record runs) — and the `SafeTx`
+   * EIP-712 type: what a signing room needs to hash, sign and execute a governance
+   * Safe transaction without app.safe.global. See `deployments/safe.ts`.
    */
   SAFE_CONTRACTS,
+  SAFE_CONTRACTS_1_5_0,
   SAFE_CONTRACT_CHAIN_IDS,
+  SAFE_CONTRACT_1_5_0_CHAIN_IDS,
   SAFE_TX_TYPES,
+  SAFE_VERSIONS,
+  publishedMultiSendCallOnly,
   requireSafeContracts,
   safeContractsFor,
+  safeContractsForVersion,
 } from "./deployments/index.js";
 export type {
   ContractKey,

@@ -344,6 +344,8 @@ export class DeepCoreRouterClient {
         recipient: p.recipient ?? p.sender,
         minAmountOut: out.minAmountOut,
         deadline: out.deadline,
+        // From the address book, never from the response: a wrap/unwrap is checked against the chain's own WETH.
+        ...(getDeployment(p.chainId)?.weth === undefined ? {} : { wrappedNative: getDeployment(p.chainId)!.weth }),
         ...(kind === "fill-router" ? { feeBps: out.quote.protocolFee.bps } : {}),
       });
     } catch (err) {

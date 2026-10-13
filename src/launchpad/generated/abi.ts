@@ -18781,3 +18781,831 @@ export const DEEPCORE_PAD_ABI = [
     "stateMutability": "nonpayable"
   }
 ] as const satisfies Abi;
+
+/**
+ * `DeepCoreLaunchAndBuy` - a `LaunchpadKitV2.createLaunch` and the creator's first buy on one of its legs, in one transaction. No owner; the launch reverts with the buy.
+ *
+ * 25 errors, 1 event, 5 functions - curated from the compiled artifact, not the full ABI.
+ */
+export const DEEPCORE_LAUNCH_AND_BUY_ABI = [
+  {
+    "type": "error",
+    "name": "AddressEmptyCode",
+    "inputs": [
+      {
+        "name": "target",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "AddressInsufficientBalance",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "BuyAmountTooLarge",
+    "inputs": [
+      {
+        "name": "amountIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "FailedInnerCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientOutput",
+    "inputs": [
+      {
+        "name": "amountOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "minAmountOut",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InsufficientValue",
+    "inputs": [
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "sent",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "InvalidRecipient",
+    "inputs": [
+      {
+        "name": "recipient",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LaunchFeeAboveMax",
+    "inputs": [
+      {
+        "name": "required",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "maxWei",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LaunchTokenMismatch",
+    "inputs": [
+      {
+        "name": "expected",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "actual",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "LegIndexOutOfRange",
+    "inputs": [
+      {
+        "name": "legIndex",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "legCount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NativeTransferFailed",
+    "inputs": [
+      {
+        "name": "to",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoCode",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoParametersForCustomPreset",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NotLocker",
+    "inputs": [
+      {
+        "name": "locker",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NotVault",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NothingFilled",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToSweep",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "OpeningFeeAboveMax",
+    "inputs": [
+      {
+        "name": "feePips",
+        "type": "uint24",
+        "internalType": "uint24"
+      },
+      {
+        "name": "maxFeePips",
+        "type": "uint24",
+        "internalType": "uint24"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReentrancyGuardReentrantCall",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "StartDelayMustBeZero",
+    "inputs": [
+      {
+        "name": "delaySeconds",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedDelta",
+    "inputs": [
+      {
+        "name": "inDelta",
+        "type": "int128",
+        "internalType": "int128"
+      },
+      {
+        "name": "outDelta",
+        "type": "int128",
+        "internalType": "int128"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "VaultMismatch",
+    "inputs": [
+      {
+        "name": "component",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ZeroAddress",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ZeroBuyAmount",
+    "inputs": []
+  },
+  {
+    "type": "event",
+    "name": "LaunchAndBuyExecuted",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "creator",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "recipient",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "poolId",
+        "type": "bytes32",
+        "indexed": false,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "quoteSpent",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokensBought",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "lpFeePips",
+        "type": "uint24",
+        "indexed": false,
+        "internalType": "uint24"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "function",
+    "name": "KIT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ILaunchpadKitV2"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "VAULT",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IVault"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "launchAndBuy",
+    "inputs": [
+      {
+        "name": "p",
+        "type": "tuple",
+        "internalType": "struct LaunchParamsV2",
+        "components": [
+          {
+            "name": "name",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "symbol",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "metadataURI",
+            "type": "string",
+            "internalType": "string"
+          },
+          {
+            "name": "userSalt",
+            "type": "bytes32",
+            "internalType": "bytes32"
+          },
+          {
+            "name": "totalSupply",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "seedSupply",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "allocationRecipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "creator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "launchOperator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "launchSteward",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "tenant",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "integrator",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "integratorBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "integratorLaunchFeeWei",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "creatorBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "protocolBps",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "schedule",
+            "type": "tuple",
+            "internalType": "struct ScheduleParams",
+            "components": [
+              {
+                "name": "preset",
+                "type": "uint8",
+                "internalType": "enum Preset"
+              },
+              {
+                "name": "initialFeeBips",
+                "type": "uint24",
+                "internalType": "uint24"
+              },
+              {
+                "name": "finalFeeBips",
+                "type": "uint24",
+                "internalType": "uint24"
+              },
+              {
+                "name": "decaySeconds",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "enabled",
+                "type": "bool",
+                "internalType": "bool"
+              },
+              {
+                "name": "startDelaySeconds",
+                "type": "uint32",
+                "internalType": "uint32"
+              }
+            ]
+          },
+          {
+            "name": "tax",
+            "type": "tuple",
+            "internalType": "struct TaxParams",
+            "components": [
+              {
+                "name": "buyBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "sellBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "taxSeconds",
+                "type": "uint32",
+                "internalType": "uint32"
+              },
+              {
+                "name": "creatorBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "protocolBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "integratorBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              }
+            ]
+          },
+          {
+            "name": "legs",
+            "type": "tuple[]",
+            "internalType": "struct LegParams[]",
+            "components": [
+              {
+                "name": "kind",
+                "type": "uint8",
+                "internalType": "enum LegKind"
+              },
+              {
+                "name": "quote",
+                "type": "address",
+                "internalType": "address"
+              },
+              {
+                "name": "weightBps",
+                "type": "uint16",
+                "internalType": "uint16"
+              },
+              {
+                "name": "maxBuyPerTx",
+                "type": "uint128",
+                "internalType": "uint128"
+              },
+              {
+                "name": "cl",
+                "type": "tuple",
+                "internalType": "struct CLLegParams",
+                "components": [
+                  {
+                    "name": "tickSpacing",
+                    "type": "int24",
+                    "internalType": "int24"
+                  },
+                  {
+                    "name": "sqrtPriceX96",
+                    "type": "uint160",
+                    "internalType": "uint160"
+                  },
+                  {
+                    "name": "tickLower",
+                    "type": "int24",
+                    "internalType": "int24"
+                  },
+                  {
+                    "name": "tickUpper",
+                    "type": "int24",
+                    "internalType": "int24"
+                  }
+                ]
+              },
+              {
+                "name": "bin",
+                "type": "tuple",
+                "internalType": "struct BinLegParams",
+                "components": [
+                  {
+                    "name": "binStep",
+                    "type": "uint16",
+                    "internalType": "uint16"
+                  },
+                  {
+                    "name": "activeId",
+                    "type": "uint24",
+                    "internalType": "uint24"
+                  },
+                  {
+                    "name": "shape",
+                    "type": "uint8",
+                    "internalType": "enum BinShape"
+                  },
+                  {
+                    "name": "binCount",
+                    "type": "uint16",
+                    "internalType": "uint16"
+                  },
+                  {
+                    "name": "offsets",
+                    "type": "uint24[]",
+                    "internalType": "uint24[]"
+                  },
+                  {
+                    "name": "weights",
+                    "type": "uint64[]",
+                    "internalType": "uint64[]"
+                  },
+                  {
+                    "name": "floorBins",
+                    "type": "uint16",
+                    "internalType": "uint16"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "name": "listing",
+            "type": "tuple",
+            "internalType": "struct LaunchMetadata",
+            "components": [
+              {
+                "name": "description",
+                "type": "string",
+                "internalType": "string"
+              },
+              {
+                "name": "websiteURI",
+                "type": "string",
+                "internalType": "string"
+              },
+              {
+                "name": "xHandle",
+                "type": "string",
+                "internalType": "string"
+              },
+              {
+                "name": "telegramHandle",
+                "type": "string",
+                "internalType": "string"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "b",
+        "type": "tuple",
+        "internalType": "struct DeepCoreLaunchAndBuy.BuyParams",
+        "components": [
+          {
+            "name": "legIndex",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "amountIn",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "minAmountOut",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "recipient",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "expectedToken",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "maxLaunchFeeWei",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "maxLpFeePips",
+            "type": "uint24",
+            "internalType": "uint24"
+          }
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "result",
+        "type": "tuple",
+        "internalType": "struct LaunchResultV2",
+        "components": [
+          {
+            "name": "token",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "poolIds",
+            "type": "bytes32[]",
+            "internalType": "bytes32[]"
+          },
+          {
+            "name": "lockIds",
+            "type": "uint256[]",
+            "internalType": "uint256[]"
+          },
+          {
+            "name": "startTime",
+            "type": "uint40",
+            "internalType": "uint40"
+          },
+          {
+            "name": "protocolFeeWei",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "integratorFeeWei",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      },
+      {
+        "name": "quoteSpent",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "tokensBought",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "lpFeePips",
+        "type": "uint24",
+        "internalType": "uint24"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "predictLaunchToken",
+    "inputs": [
+      {
+        "name": "launcher",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "userSalt",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "previewOpeningFee",
+    "inputs": [
+      {
+        "name": "schedule",
+        "type": "tuple",
+        "internalType": "struct ScheduleParams",
+        "components": [
+          {
+            "name": "preset",
+            "type": "uint8",
+            "internalType": "enum Preset"
+          },
+          {
+            "name": "initialFeeBips",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "finalFeeBips",
+            "type": "uint24",
+            "internalType": "uint24"
+          },
+          {
+            "name": "decaySeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "enabled",
+            "type": "bool",
+            "internalType": "bool"
+          },
+          {
+            "name": "startDelaySeconds",
+            "type": "uint32",
+            "internalType": "uint32"
+          }
+        ]
+      },
+      {
+        "name": "amountIn",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "lpFeePips",
+        "type": "uint24",
+        "internalType": "uint24"
+      },
+      {
+        "name": "lpFeeQuote",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "pure"
+  }
+] as const satisfies Abi;

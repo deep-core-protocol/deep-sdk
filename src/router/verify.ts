@@ -16,13 +16,29 @@
  *    swap actions plus SETTLE/TAKE whose currency, amounts and recipients are bounded by the request:
  *    every SETTLE of the user's funds is `tokenIn` for at most `amountIn`, and every TAKE pays the
  *    caller (MSG_SENDER), the request's recipient, or the router itself followed by a SWEEP to one of
- *    those. `PERMIT2_TRANSFER_FROM`, `TRANSFER`, `PERMIT2_PERMIT*`, third-party AMM legs, sub-plans and
- *    pool initialisation are refused outright: none of them is a DeepCore pool swap.
+ *    those. `PERMIT2_TRANSFER_FROM`, `TRANSFER`, `PERMIT2_PERMIT_BATCH`, third-party AMM legs, sub-plans
+ *    and pool initialisation are refused outright: none of them is a DeepCore pool swap.
+ *  - ONE `PERMIT2_PERMIT` (2026-10-11: the swap carries the user's Permit2 signature instead of a separate
+ *    `Permit2.approve` transaction), and only as the FIRST command, only for an ERC-20 `tokenIn`, only
+ *    granting THE router the transaction is addressed to (`spender == tx.to`), for that token, at least
+ *    `amountIn`, with a 64- or 65-byte signature. The signer is not checked here and need not be: the
+ *    router passes `msg.sender` to Permit2 as the owner, so a signature by anybody else reverts on chain.
  *  - `tx.value` is `amountIn` when `tokenIn` is the native sentinel and 0 otherwise.
+ *
+ * The chain's native coin against a pool quoted in its WRAPPED native (2026-10-11), only when the request
+ * names `wrappedNative`:
+ *  - pay native: `WRAP_ETH` to the router (only for a native `tokenIn`, never more than `amountIn`), then a
+ *    ROUTER-paid `SETTLE` of exactly the wrapped native, which counts as paying for the swap only after a
+ *    wrap in the same transaction. A refund `SWEEP` of native to the user is allowed.
+ *  - receive native: the plan TAKEs the wrapped native to the router and `UNWRAP_WETH` pays the user,
+ *    floored at no less than `minAmountOut` (only for a native `tokenOut`).
+ * Every TAKE names `tokenOut` (or, to the router, the wrapped native unwrapped into a native output), the
+ * SWEEP that pays the output carries a floor no lower than `minAmountOut`, and a plan-level SWEEP never
+ * pays a third party.
  *
  * Anything it cannot decode is refused: unknown bytes are not "probably fine".
  */
-import { decodeAbiParameters, decodeFunctionData, getAbiItem, isAddressEqual, toFunctionSelector, type Address, type Hex } from "viem";
+import { decodeAbiParameters, decodeFunctionData, getAbiItem, hexToBytes, isAddressEqual, toFunctionSelector, type Address, type Hex } from "viem";
 
 export const NATIVE_SENTINEL: Address = "0x0000000000000000000000000000000000000000";
 const MSG_SENDER: Address = "0x0000000000000000000000000000000000000001";
@@ -31,6 +47,7 @@ const ADDRESS_THIS: Address = "0x0000000000000000000000000000000000000002";
 /** UniversalRouter commands (packages/router/src/libraries/Commands.sol). */
 const CMD = {
   SWEEP: 0x04,
+  PERMIT2_PERMIT: 0x0a,
   PAY_PORTION: 0x06,
   WRAP_ETH: 0x0b,
   UNWRAP_WETH: 0x0c,
@@ -113,6 +130,11 @@ export interface SwapRequestFacts {
   readonly recipient: Address;
   readonly minAmountOut: bigint;
   readonly deadline: number;
+  /**
+   * The chain's wrapped native (WETH9-style). Needed for a native `tokenIn` / `tokenOut` traded through
+   * a pool quoted in the wrapped native: `WRAP_ETH` / `UNWRAP_WETH` around the swap are checked against it.
+   */
+  readonly wrappedNative?: Address;
   /** The fee the quote showed, for a fill-router transaction. */
   readonly feeBps?: number;
 }
@@ -157,8 +179,30 @@ export function verifySwapCalldata(kind: "universal-router" | "fill-router", tx:
   const expectedValue = nativeIn ? req.amountIn : 0n;
   if (tx.value !== expectedValue) refuse(`tx.value ${tx.value} is not ${expectedValue}`);
   if (kind === "fill-router") return verifyFill(tx.data, req, nativeIn);
-  return verifyExecute(tx.data, req);
+  return verifyExecute(tx.data, req, tx.to);
 }
+
+/** `abi.encode(IAllowanceTransfer.PermitSingle, bytes signature)`, the PERMIT2_PERMIT command's input. */
+const PERMIT_SINGLE_INPUT = [
+  {
+    type: "tuple",
+    components: [
+      {
+        name: "details",
+        type: "tuple",
+        components: [
+          { name: "token", type: "address" },
+          { name: "amount", type: "uint160" },
+          { name: "expiration", type: "uint48" },
+          { name: "nonce", type: "uint48" },
+        ],
+      },
+      { name: "spender", type: "address" },
+      { name: "sigDeadline", type: "uint256" },
+    ],
+  },
+  { type: "bytes" },
+] as const;
 
 function verifyFill(data: Hex, req: SwapRequestFacts, nativeIn: boolean): void {
   let p;
@@ -177,7 +221,7 @@ function verifyFill(data: Hex, req: SwapRequestFacts, nativeIn: boolean): void {
   if (req.feeBps !== undefined && p.maxFeeBps !== req.feeBps) refuse("fill fee differs from the quoted rate");
 }
 
-function verifyExecute(data: Hex, req: SwapRequestFacts): void {
+function verifyExecute(data: Hex, req: SwapRequestFacts, router: Address): void {
   let args;
   try {
     args = decodeFunctionData({ abi: EXECUTE_ABI, data }).args;
@@ -186,31 +230,86 @@ function verifyExecute(data: Hex, req: SwapRequestFacts): void {
   }
   const [commands, inputs, deadline] = args;
   if (Number(deadline) !== req.deadline) refuse("execute deadline differs from the one shown");
-  const bytes = Buffer.from(commands.slice(2), "hex");
+  const bytes = hexToBytes(commands);
   if (bytes.length === 0 || bytes.length !== inputs.length) refuse("commands and inputs do not line up");
+  const nativeIn = same(req.tokenIn, NATIVE_SENTINEL);
+  const nativeOut = same(req.tokenOut, NATIVE_SENTINEL);
+  const toUser = (r: Address) => same(r, MSG_SENDER) || same(r, req.recipient);
   let takesToRouter = false;
   let sweptToUser = false;
+  let unwrapped = false;
+  let wrapped = false;
+  const decode2 = (input: Hex) => {
+    try {
+      return decodeAbiParameters([{ type: "address" }, { type: "uint256" }], input);
+    } catch {
+      return refuse("command input is not (address, uint256)");
+    }
+  };
+  const decode3 = (input: Hex) => {
+    try {
+      return decodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint256" }], input);
+    } catch {
+      return refuse("command input is not (address, address, uint256)");
+    }
+  };
   for (let i = 0; i < bytes.length; i++) {
     const cmd = bytes[i]! & COMMAND_TYPE_MASK;
     const input = inputs[i]!;
     switch (cmd) {
       case CMD.INFI_SWAP: {
-        const r = verifyInfiPlan(input, req);
+        const r = verifyInfiPlan(input, req, wrapped);
         takesToRouter ||= r.takesToRouter;
         break;
       }
-      case CMD.SWEEP:
-      case CMD.UNWRAP_WETH:
+      case CMD.SWEEP: {
+        const [token, recipient, amountMin] = decode3(input);
+        if (!toUser(recipient)) refuse("output is paid to a third party");
+        if (same(token, req.tokenOut)) {
+          if (amountMin < req.minAmountOut) refuse("sweep's floor is below the minimum shown");
+          sweptToUser = true;
+        } else if (!(same(token, req.tokenIn) || same(token, NATIVE_SENTINEL))) {
+          refuse("sweep moves a currency that is neither the output nor a refund of the input");
+        }
+        break;
+      }
       case CMD.PAY_PORTION: {
-        const [, recipient] = decodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint256" }], input);
-        if (!(same(recipient, MSG_SENDER) || same(recipient, req.recipient))) refuse("output is paid to a third party");
-        if (cmd !== CMD.PAY_PORTION) sweptToUser = true;
+        const [, recipient] = decode3(input);
+        if (!toUser(recipient)) refuse("output is paid to a third party");
+        break;
+      }
+      case CMD.UNWRAP_WETH: {
+        const [recipient, amountMin] = decode2(input);
+        if (!nativeOut) refuse("unwrap pays native for a trade that does not ask for native");
+        if (req.wrappedNative === undefined) refuse("unwrap without the chain's wrapped native to check it against");
+        if (!toUser(recipient)) refuse("unwrap pays a third party");
+        if (amountMin < req.minAmountOut) refuse("unwrap's floor is below the minimum shown");
+        sweptToUser = true;
+        unwrapped = true;
         break;
       }
       case CMD.WRAP_ETH: {
-        const [recipient, amount] = decodeAbiParameters([{ type: "address" }, { type: "uint256" }], input);
+        const [recipient, amount] = decode2(input);
+        if (!nativeIn) refuse("wrap for a trade that does not pay native");
         if (!same(recipient, ADDRESS_THIS)) refuse("wrap pays a third party");
-        if (amount > req.amountIn && amount !== (1n << 255n)) refuse("wrap exceeds amountIn");
+        if (amount > req.amountIn && amount !== CONTRACT_BALANCE) refuse("wrap exceeds amountIn");
+        wrapped = true;
+        break;
+      }
+      case CMD.PERMIT2_PERMIT: {
+        if (i !== 0) refuse("a Permit2 permit comes anywhere but first");
+        if (nativeIn) refuse("a Permit2 permit on a trade that pays native");
+        let permit, signature: Hex;
+        try {
+          [permit, signature] = decodeAbiParameters(PERMIT_SINGLE_INPUT, input);
+        } catch {
+          return refuse("PERMIT2_PERMIT input is not (PermitSingle, bytes)");
+        }
+        if (!same(permit.details.token, req.tokenIn)) refuse("the permit grants a token other than tokenIn");
+        if (!same(permit.spender, router)) refuse("the permit grants a spender other than this router");
+        if (permit.details.amount < req.amountIn) refuse("the permit grants less than amountIn");
+        const sigBytes = (signature.length - 2) / 2;
+        if (sigBytes !== 64 && sigBytes !== 65) refuse("the permit's signature is not 64 or 65 bytes");
         break;
       }
       default:
@@ -218,37 +317,71 @@ function verifyExecute(data: Hex, req: SwapRequestFacts): void {
     }
   }
   if (takesToRouter && !sweptToUser) refuse("output taken to the router is never swept to the user");
+  if (unwrapped && !takesToRouter) refuse("unwrap with nothing taken to the router");
 }
 
-function verifyInfiPlan(input: Hex, req: SwapRequestFacts): { takesToRouter: boolean } {
+const CONTRACT_BALANCE = 1n << 255n;
+
+function verifyInfiPlan(input: Hex, req: SwapRequestFacts, wrapped: boolean): { takesToRouter: boolean } {
   let actions: Hex, params: readonly Hex[];
   try {
     [actions, params] = decodeAbiParameters([{ type: "bytes" }, { type: "bytes[]" }], input);
   } catch {
     return refuse("INFI_SWAP plan is not (actions, params)");
   }
-  const acts = Buffer.from(actions.slice(2), "hex");
+  const acts = hexToBytes(actions);
   if (acts.length === 0 || acts.length !== params.length) refuse("plan actions and params do not line up");
   let takesToRouter = false;
   let settled = false;
+  const nativeOut = same(req.tokenOut, NATIVE_SENTINEL);
   const okRecipient = (r: Address) => same(r, MSG_SENDER) || same(r, req.recipient) || same(r, ADDRESS_THIS);
+  /* What a TAKE may move: the output, or (to the router only) the wrapped native unwrapped into a native output. */
+  const okTakeCurrency = (c: Address, recipient: Address | null) => {
+    if (same(c, req.tokenOut)) return true;
+    return nativeOut && req.wrappedNative !== undefined && same(c, req.wrappedNative) && recipient !== null && same(recipient, ADDRESS_THIS);
+  };
+  const dec2 = (p: Hex) => {
+    try {
+      return decodeAbiParameters([{ type: "address" }, { type: "uint256" }], p);
+    } catch {
+      return refuse("plan action params do not decode");
+    }
+  };
+  const dec3 = (p: Hex) => {
+    try {
+      return decodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint256" }], p);
+    } catch {
+      return refuse("plan action params do not decode");
+    }
+  };
   for (let i = 0; i < acts.length; i++) {
     const a = acts[i]!;
     const p = params[i]!;
     if (SWAP_ACTIONS.has(a)) continue; // the pool swap itself; its floors are the TAKEs' and minAmountOut's business
     switch (a) {
       case ACT.SETTLE_ALL: {
-        const [currency, maxAmount] = decodeAbiParameters([{ type: "address" }, { type: "uint256" }], p);
+        const [currency, maxAmount] = dec2(p);
         if (!same(currency, req.tokenIn)) refuse("plan settles a currency other than tokenIn from the user");
         if (maxAmount > req.amountIn) refuse("plan may pull more than amountIn from the user");
         settled = true;
         break;
       }
       case ACT.SETTLE: {
-        const [currency, amount, payerIsUser] = decodeAbiParameters([{ type: "address" }, { type: "uint256" }, { type: "bool" }], p);
+        let decoded;
+        try {
+          decoded = decodeAbiParameters([{ type: "address" }, { type: "uint256" }, { type: "bool" }], p);
+        } catch {
+          return refuse("plan action params do not decode");
+        }
+        const [currency, amount, payerIsUser] = decoded;
         if (payerIsUser) {
           if (!same(currency, req.tokenIn)) refuse("plan settles a currency other than tokenIn from the user");
           if (amount > req.amountIn) refuse("plan may pull more than amountIn from the user");
+          settled = true;
+        } else if (wrapped) {
+          /* Paid by the router out of what this transaction wrapped: the wrapped native, never more than amountIn. */
+          if (req.wrappedNative === undefined || !same(currency, req.wrappedNative)) refuse("router pays a currency other than the wrapped native it wrapped");
+          if (amount > req.amountIn && amount !== CONTRACT_BALANCE) refuse("router settles more than amountIn");
           settled = true;
         }
         break;
@@ -258,26 +391,43 @@ function verifyInfiPlan(input: Hex, req: SwapRequestFacts): { takesToRouter: boo
         break;
       case ACT.TAKE:
       case ACT.TAKE_PORTION: {
-        const [, recipient] = decodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "uint256" }], p);
+        const [currency, recipient] = dec3(p);
         if (!okRecipient(recipient)) refuse("plan takes output to a third party");
+        if (!okTakeCurrency(currency, recipient)) refuse("plan takes a currency other than the output");
         if (same(recipient, ADDRESS_THIS)) takesToRouter = true;
         break;
       }
       case ACT.TAKE_PAIR: {
-        const [, , recipient] = decodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "address" }], p);
+        let decoded;
+        try {
+          decoded = decodeAbiParameters([{ type: "address" }, { type: "address" }, { type: "address" }], p);
+        } catch {
+          return refuse("plan action params do not decode");
+        }
+        const recipient = decoded[2];
         if (!okRecipient(recipient)) refuse("plan takes output to a third party");
         if (same(recipient, ADDRESS_THIS)) takesToRouter = true;
         break;
       }
       case ACT.TAKE_ALL: {
-        const [, minAmount] = decodeAbiParameters([{ type: "address" }, { type: "uint256" }], p);
+        const [currency, minAmount] = dec2(p);
+        if (!okTakeCurrency(currency, null)) refuse("plan takes a currency other than the output");
         if (minAmount < req.minAmountOut) refuse("plan's floor is below the minimum shown");
         break; // pays msg.sender by construction
       }
+      case ACT.SWEEP: {
+        let decoded;
+        try {
+          decoded = decodeAbiParameters([{ type: "address" }, { type: "address" }], p);
+        } catch {
+          return refuse("plan action params do not decode");
+        }
+        if (!okRecipient(decoded[1])) refuse("plan sweeps the router's balance to a third party");
+        break;
+      }
       case ACT.CLOSE_CURRENCY:
       case ACT.CLEAR_OR_TAKE:
-      case ACT.SWEEP:
-        break; // settle-or-take of the plan's own residue; neither pulls from the user nor pays a third party
+        break; // settle-or-take of the plan's own residue with the caller; neither pulls from the user nor pays a third party
       default:
         refuse(`plan action 0x${a.toString(16).padStart(2, "0")} is not part of a swap`);
     }

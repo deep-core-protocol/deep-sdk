@@ -848,6 +848,12 @@ const DEPLOYMENTS_TABLE = {
     /* Read on chain: name(), symbol(), decimals(). */
     tokens: [
       { address: "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", symbol: "WETH", name: "WETH", decimals: 18, isTestToken: false },
+      /* USDG (Global Dollar), issued by Paxos. Address from the issuer's own table, "Robinhood Mainnet"
+         token row: https://docs.paxos.com/guides/stablecoin/usdg/mainnet (read 2026-10-11; the OFT row
+         0x0d54…28d1 is the LayerZero wrapper, not the token). Read on chain 2026-10-11 via
+         rpc.mainnet.chain.robinhood.com: name() "Global Dollar", symbol() "USDG", decimals() 6,
+         totalSupply() 694,414,011.096403, 170-byte proxy. The router's connector on this chain. */
+      { address: "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168", symbol: "USDG", name: "Global Dollar", decimals: 6, isTestToken: false },
     ],
   },
 
@@ -1205,5 +1211,5 @@ export function explorerAddressUrl(chainId: DeepCoreChainId, address: string): s
 
 // Safe v1.4.1 contract addresses per chain (see ./safe.ts). Re-exported here so
 // the `deployments` namespace and the `./deployments` subpath carry them.
-export { SAFE_CONTRACTS, SAFE_CONTRACT_CHAIN_IDS, SAFE_TX_TYPES, requireSafeContracts, safeContractsFor } from "./safe.js";
-export type { SafeContracts } from "./safe.js";
+export { SAFE_CONTRACTS, SAFE_CONTRACTS_1_5_0, SAFE_CONTRACT_CHAIN_IDS, SAFE_CONTRACT_1_5_0_CHAIN_IDS, SAFE_TX_TYPES, SAFE_VERSIONS, publishedMultiSendCallOnly, requireSafeContracts, safeContractsFor, safeContractsForVersion } from "./safe.js";
+export type { SafeContracts, SafeVersion } from "./safe.js";

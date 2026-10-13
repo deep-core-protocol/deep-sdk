@@ -18,8 +18,19 @@ import { HttpRequestError, TimeoutError, http, type HttpTransportConfig, type Tr
  * is per URL and module-wide, so every client and transport in the page that names the same endpoint
  * shares what was learned.
  *
- * WHAT IT DOES NOT DO. An RPC-level answer — a revert, "block range too large", an unknown method —
- * is the node WORKING, and never cools an endpoint. When every endpoint is cooling down the request
+ * A LIMIT ANSWERED AS JSON-RPC COOLS TOO. Some public endpoints say "not serving you" inside an
+ * HTTP 200: `rpc.ordofi.network` (Robinhood) answers every call with `-32005 "the network is busy,
+ * please try again in a moment"`; others say `-32005 "limit exceeded"`, `"rate limited"`, `"too many
+ * requests"`. viem's `fallback` already moves on from those, but without a cooldown every later
+ * request paid that endpoint first (measured ~2.7 s per call on ordofi). So a JSON-RPC error whose
+ * code is a limit code (`-32005`, `-32016`, `-32029`, `-32090`, `429`) or whose message reads as a
+ * rate limit / busy / quota cools the endpoint exactly like an HTTP 429 — EXCEPT on `eth_getLogs`,
+ * where `-32005` is also how several providers say "too many results / range too wide" for THAT
+ * request (BNB's dataseed nodes, Infura): the fallback still moves on, the endpoint stays usable for
+ * reads. Mirrors `classifyFailure` in apps/api/src/router/transport.ts.
+ *
+ * WHAT IT DOES NOT DO. Any other RPC-level answer — a revert, "block range too large", an unknown
+ * method — is the node WORKING, and never cools an endpoint. When every endpoint is cooling down the request
  * fails fast with `EndpointCoolingDownError` (an `HttpRequestError`, so callers classify it as a
  * transport failure and show their honest "unreachable" state) instead of queueing retries; the next
  * attempt after the soonest cooldown expires probes again.
@@ -60,10 +71,44 @@ function coolsOnStatus(status: number | undefined): boolean {
   return status === undefined || status === 401 || status === 403 || status === 408 || status === 429 || status >= 500
 }
 
-function isEndpointFailure(e: unknown, coolOnTimeout: boolean): boolean {
+/** JSON-RPC error codes that mean "not serving you right now" rather than "this request is wrong". */
+const LIMIT_CODES: ReadonlySet<number> = new Set([-32005, -32016, -32029, -32090, 429])
+/** Messages that say the same in words (checked across the error's cause chain). */
+const NOT_SERVING = /busy|rate.?limit|too many requests|capacity|limit exceeded|exceeded .*limit|try again (later|in a moment)|over quota|quota/i
+
+function errCode(e: unknown): number | undefined {
+  for (let x: unknown = e, i = 0; x && i < 6; i++) {
+    const c = (x as { code?: unknown }).code
+    if (typeof c === 'number') return c
+    x = (x as { cause?: unknown }).cause
+  }
+  return undefined
+}
+
+function errText(e: unknown): string {
+  const parts: string[] = []
+  for (let x: unknown = e, i = 0; x && i < 6; i++) {
+    const m = x as { details?: unknown; shortMessage?: unknown }
+    if (typeof m.details === 'string') parts.push(m.details)
+    if (typeof m.shortMessage === 'string') parts.push(m.shortMessage)
+    x = (x as { cause?: unknown }).cause
+  }
+  return parts.join(' | ')
+}
+
+/** A JSON-RPC answer that is a rate limit / "busy" / quota refusal (see the header). */
+export function isRpcLimitError(e: unknown): boolean {
+  const code = errCode(e)
+  if (code === 3) return false // a revert is an answer, whatever its message says
+  if (code !== undefined && LIMIT_CODES.has(code)) return true
+  return NOT_SERVING.test(errText(e))
+}
+
+function isEndpointFailure(e: unknown, coolOnTimeout: boolean, method: string | undefined): boolean {
   if (e instanceof EndpointCoolingDownError) return false
   if (e instanceof TimeoutError) return coolOnTimeout
   if (e instanceof HttpRequestError) return coolsOnStatus(e.status)
+  if (method !== 'eth_getLogs' && isRpcLimitError(e)) return true
   return false
 }
 
@@ -107,7 +152,7 @@ export function cooledHttp(url: string, config: HttpTransportConfig = {}, opts: 
         health.delete(url)
         return out
       } catch (e) {
-        if (isEndpointFailure(e, coolOnTimeout)) noteEndpointFailure(url, opts)
+        if (isEndpointFailure(e, coolOnTimeout, (args as { method?: string } | undefined)?.method)) noteEndpointFailure(url, opts)
         throw e
       }
     }) as typeof t.request
