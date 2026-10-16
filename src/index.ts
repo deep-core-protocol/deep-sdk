@@ -97,6 +97,66 @@ export * as lock from "./lock/index.js";
 export * as trust from "./trust/index.js";
 export * as drop from "./drop/index.js";
 
+// --- limit orders and DCA ---------------------------------------------------
+// `DeepCoreRangeOrders` (CL limit orders as one-spacing range positions, filled by
+// any executor for the makers' tips) and `DeepCoreDCA` (scheduled exact-input swaps
+// through one pool, each slice bounded on chain by the user's own price floor).
+export * as orders from "./orders/index.js";
+
+// --- managed-liquidity vaults (Earn) -----------------------------------------
+// `DeepCoreVaultFactory` + `DeepCoreManagedVault`: pro-rata shares of a concentrated
+// position whose range follows a pool oracle's TWAP; permissionless, guarded rebalances.
+export * as vaults from "./vaults/index.js";
+export {
+  RANGE_ORDERS_ABI,
+  DCA_ABI,
+  DCA_MAX_SLICES,
+  DCA_MIN_INTERVAL,
+  ORDERS_MAX_INTEGRATOR_BPS,
+  RANGE_ORDERS_FORBIDDEN_HOOK_BITS,
+  RANGE_ORDERS_LAUNCH_GUARD_BITMAPS,
+  isLaunchPoolKey,
+  LimitOrdersNotOnLaunchPoolsError,
+  OrdersInputError,
+  snapLimitLevel,
+  tickToPrice,
+  priceToTick,
+  minOutFromPriceX96,
+  minPriceX96FromBound,
+  minPriceX96FromSpot,
+  dcaEscrow,
+  buildPlaceLimitOrder,
+  buildCancelLimitOrder,
+  buildWithdrawLimitOrder,
+  buildExecuteEpoch,
+  buildExecuteEpochs,
+  buildCreateDca,
+  buildCancelDca,
+  buildExecuteDcaSlice,
+  readEpoch,
+  readOrder,
+  isEpochCrossed,
+  readMakerOrders,
+  readOpenEpochs,
+  readPlan,
+  isPlanDue,
+  readOwnerPlans,
+  readDuePlans,
+} from "./orders/index.js";
+export type {
+  CreateDcaArgs,
+  DcaPlanState,
+  EpochState,
+  LimitOrderState,
+  LogScan,
+  MakerOrder,
+  MakerOrderStatus,
+  OrdersTx,
+  PlaceLimitOrderArgs,
+  SnapResult,
+  SpotPrice,
+} from "./orders/index.js";
+
 // --- launchpad -------------------------------------------------------------
 export * as launchpad from "./launchpad/index.js";
 export {
@@ -763,6 +823,10 @@ export {
   stockPairReadiness,
   ukIsDaylight,
   usEasternIsDaylight,
+  bandPercentEdges,
+  MARKET_HOURS_READ_ABI,
+  PRICE_BAND_ORACLE_READ_ABI,
+  readStockMarketStatus,
 } from "./rwa/index.js";
 export type {
   ChainlinkFeedConfig,
@@ -776,6 +840,8 @@ export type {
   StockPairBlocker,
   StockPairCoverage,
   StockPairReadiness,
+  ReadStockMarketStatusOptions,
+  StockMarketStatus,
 } from "./rwa/index.js";
 
 // --- token lists (Uniswap Token Lists standard) ----------------------------
@@ -918,3 +984,26 @@ export type {
   RoundingMode,
   UsdAmount,
 } from "./price/index.js";
+
+// --- liquidity rewards ------------------------------------------------------
+// `DeepCoreLiquidityRewardsHook` (packages/lp-rewards): project-funded reward streams
+// paid per second to in-range CL liquidity, measured by the pool's own hook.
+export * as rewards from "./rewards/index.js";
+export {
+  LP_REWARDS_ABI,
+  LP_REWARDS_BITMAP,
+  lpRewardsHookOf,
+  isRewardsPool,
+  nftPositionKey,
+  rewardsPerDay,
+  positionRewardsPerDay,
+  readRewardStreams,
+  readRewardsPool,
+  readEarned,
+  buildClaim as buildRewardsClaim,
+  buildClaimCredit as buildRewardsClaimCredit,
+  buildBurnCreditingRewards,
+  RewardsInputError,
+} from "./rewards/index.js";
+export type { RewardStream, RewardsPositionKey, RewardsPoolState, RewardsTx } from "./rewards/index.js";
+export * from "./stocks/premium.js";

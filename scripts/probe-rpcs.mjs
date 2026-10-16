@@ -340,6 +340,22 @@ export const CHAINS = {
       'https://xrpc.cl/sepolia',
     ],
   },
+  // Base Sepolia: DeepCore's testnet from 2026-10-15 (owner; Ethereum Sepolia reprices contract creation ~7.6x).
+  baseSepolia: {
+    id: 84532,
+    candidates: [
+      'https://sepolia.base.org',
+      'https://base-sepolia-rpc.publicnode.com',
+      'https://84532.rpc.thirdweb.com',
+      'https://base-sepolia.drpc.org',
+      'https://base-sepolia.gateway.tenderly.co',
+      'https://base-sepolia.blockpi.network/v1/rpc/public',
+      'https://base-sepolia-public.nodies.app',
+      'https://sepolia.base.meowrpc.com',
+      'https://base-sepolia.api.onfinality.io/public',
+      'https://1rpc.io/base-sepolia',
+    ],
+  },
   stableTestnet: {
     id: 2201,
     candidates: [
@@ -422,6 +438,11 @@ export const IDENTITY = {
   999: {
     genesis: '0xd8fcc13b6a195b88b7b2da3722ff6cad767b13a8c1e9ffb1c73aa9d216d895f0', votes: 2,
     reference: ['https://rpc.purroofgroup.com', 'https://hyperliquid.drpc.org'],
+  },
+  // Base Sepolia, read 2026-10-15 from publicnode and thirdweb (sepolia.base.org prunes history below block 46.5 M).
+  84532: {
+    genesis: '0x0dcc9e089e30b90ddfc55be9a37dd15bc551aeee999d2e2b51414c54eaf934e4', votes: 2,
+    reference: ['https://base-sepolia-rpc.publicnode.com', 'https://84532.rpc.thirdweb.com'],
   },
   143: {
     genesis: '0x0c47353304f22b1c15706367d739b850cda80b5c87bbc335014fef3d88deaac9', votes: 3,

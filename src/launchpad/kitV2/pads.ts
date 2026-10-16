@@ -87,7 +87,11 @@ export const PAD_MAX_METADATA_URI_BYTES = 4096;
 /** The widgets' ceiling on a swap-output fee, mirrored (1%). */
 export const PAD_MAX_DEX_FEE_BPS = 100;
 
-export const PAD_KINDS = ["launchpad", "dex", "both"] as const;
+/* APPENDED, never renamed or removed: a brand stores the name. `stocks` was added 2026-10-12 (owner: "Build a
+   Stock Market"). An SDK that predates a kind REFUSES the brand that carries it (`validatePadBrand` lists the
+   kinds it knows), so a reader built before `stocks` treats a stock-market site's brand as invalid and draws
+   the site unbranded; every brand written before it (launchpad / dex / both / absent) reads exactly as before. */
+export const PAD_KINDS = ["launchpad", "dex", "both", "stocks"] as const;
 export type PadKind = (typeof PAD_KINDS)[number];
 export const PAD_DEX_SCOPES = ["launches", "all"] as const;
 export type PadDexScope = (typeof PAD_DEX_SCOPES)[number];
@@ -151,7 +155,11 @@ export interface PadBrand {
    * over DeepCore pools with this pad's integrator wallet taking `dex.feeBps`, no
    * launch surface. `both`: a launchpad with a full DEX beside it. The same
    * `DeepCorePad` contract backs all three; the kind only changes what the site
-   * renders and which pools it routes through.
+   * renders and which pools it routes through. `stocks` (2026-10-12): a stock
+   * market, a trading front over the chain's DeepCore pools that shows ONLY
+   * tokenised-stock pairs, with each pair's market-hours status, price band and
+   * issuer note; no launch surface. Same contract, same `dex.feeBps`; scope is
+   * always `all` (stock pools are not launches).
    */
   readonly kind?: PadKind;
   /**

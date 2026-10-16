@@ -15,8 +15,9 @@
      pairs         the join between the feed table and the stock-token table, and an
                    honest account of which half is missing where.
 
-   Nothing in this module reads a network, writes a transaction, or decides an
-   ownership. It turns verified data into the exact arguments a Safe will sign.
+   Nothing in this module writes a transaction or decides an ownership. It turns
+   verified data into the exact arguments a Safe will sign; `status` is the one
+   reader (a stock pool's live calendar, halt and band, for a front end).
    ============================================================================ */
 
 export {
@@ -62,4 +63,7 @@ export type {
 } from "./bandOracle.js";
 
 export { stockPairCoverage, stockPairReadiness } from "./pairs.js";
+
+export { bandPercentEdges, MARKET_HOURS_READ_ABI, PRICE_BAND_ORACLE_READ_ABI, readStockMarketStatus } from "./status.js";
+export type { ReadStockMarketStatusOptions, StockMarketStatus } from "./status.js";
 export type { StockPairBlocker, StockPairCoverage, StockPairReadiness } from "./pairs.js";

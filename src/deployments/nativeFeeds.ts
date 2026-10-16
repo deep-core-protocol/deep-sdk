@@ -16,9 +16,14 @@
    HOW EVERY CHAINLINK ROW WAS ESTABLISHED. Chainlink's reference-data directory said
    which address to go and look at. Then the address itself was read: it has code,
    `decimals()` agrees with the directory, `description()` names the base asset on a
-   word boundary, and `latestRoundData()` returned a positive, complete, non-future
-   round inside its own heartbeat plus {@link STALE_GRACE_SECONDS}. A candidate that
-   failed any of those is in `chainlinkRejections` with the reason, NOT in `chainlink`.
+   word boundary, and `latestRoundData()` returned a positive, complete round that
+   was judged AGAINST THE CHAIN'S OWN HEAD, read from the same endpoint right after
+   it: at most {@link FUTURE_SKEW_SECONDS} past that head's timestamp, and no older
+   than its own heartbeat plus {@link STALE_GRACE_SECONDS} before it. Every row
+   records that head (`verifiedHeadBlock`, `verifiedHeadTimestamp`) and how far the
+   head sat from the wall clock at the read (`verifiedHeadWallOffsetSeconds`), so the
+   verdict can be re-derived from the row alone. A candidate that failed any of those
+   is in `chainlinkRejections` with the reason, NOT in `chainlink`.
    The directory is trusted for which addresses to look at and for the heartbeat and
    deviation threshold, which have no on-chain counterpart. It is trusted for nothing
    else.
@@ -120,8 +125,25 @@ export interface ChainlinkNativeFeed {
   readonly verifiedAnswer: string;
   /** `latestRoundData().updatedAt` at verification, unix seconds. */
   readonly verifiedUpdatedAt: number;
-  /** How old that round was when it was read. Always within `heartbeat` + grace, or the row would not exist. */
+  /** The chain's latest block when the round was read, from the same endpoint, read right after it. */
+  readonly verifiedHeadBlock: number;
+  /** That block's timestamp: the reference clock the round was judged against. */
+  readonly verifiedHeadTimestamp: number;
+  /**
+   * `verifiedHeadTimestamp − verifiedUpdatedAt`: how old the round was IN CHAIN TIME when
+   * it was read. Always within `heartbeat` + grace, or the row would not exist; never
+   * below `−FUTURE_SKEW_SECONDS`, or the row would not exist either. A negative value is
+   * a round the endpoint served from a node past the one that served the head.
+   */
   readonly verifiedAgeSeconds: number;
+  /**
+   * `verifiedHeadTimestamp − wall clock` at the read: how far this chain's block clock
+   * sat from real time. Always within ±120 s, because a head
+   * further from the wall clock than that is refused as a reference and the next endpoint
+   * is read instead (a load-balanced HyperEVM endpoint served a head an hour behind on
+   * 2026-10-15). Measured 0 to −1 s on sub-2 s chains, −4 to −10 s on 12 s-slot chains.
+   */
+  readonly verifiedHeadWallOffsetSeconds: number;
 }
 
 /**
@@ -200,10 +222,10 @@ export interface NativeFeedRecord {
 }
 
 /** When the table below was produced. Every `verified*` number is one reading at this instant. */
-export const NATIVE_FEEDS_VERIFIED_AT = "2026-09-21T00:47:14.328Z";
+export const NATIVE_FEEDS_VERIFIED_AT = "2026-10-15T16:34:22.259Z";
 
 /** The same instant as a unix second, so an age can be recomputed without parsing a string. */
-export const NATIVE_FEEDS_VERIFIED_INSTANT = 1789951634;
+export const NATIVE_FEEDS_VERIFIED_INSTANT = 1792082062;
 
 /** Chainlink's reference-data directory, the document the addresses came from. */
 export const NATIVE_FEED_DIRECTORY_BASE = "https://reference-data-directory.vercel.app";
@@ -225,6 +247,21 @@ export const PYTH_HERMES_BASE = "https://hermes.pyth.network";
  * the committed table and the runtime reader cannot drift apart.
  */
 export const STALE_GRACE_SECONDS = 300;
+
+/**
+ * Seconds a round's `updatedAt` may sit PAST the clock it is judged against before it is
+ * called a future timestamp — the chain's head when the generator verifies a row, the
+ * caller's wall clock when the runtime reader checks one.
+ *
+ * Measured on 2026-10-15 (Monad and Base, three reads a minute apart, head and round read
+ * in the same instant): every aggregator was BEHIND its chain's head, never ahead, and the
+ * head tracked wall time within ±1 s. The allowance covers a load-balanced endpoint serving
+ * the round from a node past the one that served the head, and sequencer timestamp
+ * latitude; it is not a widening. A feed more than this past the head is lying about time.
+ *
+ * The generator applies exactly this constant, so the table and the reader agree.
+ */
+export const FUTURE_SKEW_SECONDS = 120;
 
 /** Every chain that was surveyed, whether or not a source was found. */
 export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
@@ -254,10 +291,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "ETH / USD",
       codeSize: 9571,
-      verifiedRoundId: "129127208515966895171",
-      verifiedAnswer: "269442899628",
-      verifiedUpdatedAt: 1789950107,
-      verifiedAgeSeconds: 1527,
+      verifiedRoundId: "129127208515966895987",
+      verifiedAnswer: "242653793967",
+      verifiedUpdatedAt: 1792081631,
+      verifiedHeadBlock: 26199142,
+      verifiedHeadTimestamp: 1792082051,
+      verifiedAgeSeconds: 420,
+      verifiedHeadWallOffsetSeconds: -12,
     },
     chainlinkAlternatives: [
       {
@@ -275,10 +315,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 6,
         description: "ETH / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073709575751",
-        verifiedAnswer: "269501241270",
-        verifiedUpdatedAt: 1789950095,
-        verifiedAgeSeconds: 1539,
+        verifiedRoundId: "18446744073709576557",
+        verifiedAnswer: "242631164987",
+        verifiedUpdatedAt: 1792081643,
+        verifiedHeadBlock: 26199142,
+        verifiedHeadTimestamp: 1792082051,
+        verifiedAgeSeconds: 408,
+        verifiedHeadWallOffsetSeconds: -12,
       },
       {
         proxyAddress: "0xd82562bb17557231Cd871e1B2525F3AB8d63D409",
@@ -295,10 +338,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 6,
         description: "ETH / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073709569261",
-        verifiedAnswer: "268402146798",
-        verifiedUpdatedAt: 1789949771,
-        verifiedAgeSeconds: 1863,
+        verifiedRoundId: "18446744073709570068",
+        verifiedAnswer: "242592577289",
+        verifiedUpdatedAt: 1792081655,
+        verifiedHeadBlock: 26199142,
+        verifiedHeadTimestamp: 1792082051,
+        verifiedAgeSeconds: 396,
+        verifiedHeadWallOffsetSeconds: -13,
       },
     ],
     chainlinkRejections: [
@@ -345,10 +391,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "BNB / USD",
       codeSize: 9571,
-      verifiedRoundId: "55340232221132102768",
-      verifiedAnswer: "78134890000",
-      verifiedUpdatedAt: 1789951619,
-      verifiedAgeSeconds: 15,
+      verifiedRoundId: "55340232221132167573",
+      verifiedAnswer: "72820441236",
+      verifiedUpdatedAt: 1792082061,
+      verifiedHeadBlock: 127819369,
+      verifiedHeadTimestamp: 1792082066,
+      verifiedAgeSeconds: 5,
+      verifiedHeadWallOffsetSeconds: -1,
     },
     chainlinkAlternatives: [
       {
@@ -366,10 +415,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 6,
         description: "BNB / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073710323863",
-        verifiedAnswer: "780876530000000000000",
-        verifiedUpdatedAt: 1789951611,
-        verifiedAgeSeconds: 23,
+        verifiedRoundId: "18446744073710400373",
+        verifiedAnswer: "728142617978349700000",
+        verifiedUpdatedAt: 1792082055,
+        verifiedHeadBlock: 127819367,
+        verifiedHeadTimestamp: 1792082065,
+        verifiedAgeSeconds: 10,
+        verifiedHeadWallOffsetSeconds: 0,
       },
     ],
     chainlinkRejections: [
@@ -388,7 +440,7 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
     pythRejection: null,
     note: null,
     directoryUrl: "https://reference-data-directory.vercel.app/feeds-bsc-mainnet.json",
-    verifiedEndpoint: "https://56.rpc.thirdweb.com",
+    verifiedEndpoint: "https://bsc-dataseed.bnbchain.org",
   },
   8453: {
     chainId: 8453,
@@ -416,10 +468,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "ETH / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073709556026",
-      verifiedAnswer: "269579082546",
-      verifiedUpdatedAt: 1789951587,
-      verifiedAgeSeconds: 47,
+      verifiedRoundId: "18446744073709559960",
+      verifiedAnswer: "242152220981",
+      verifiedUpdatedAt: 1792081971,
+      verifiedHeadBlock: 52646360,
+      verifiedHeadTimestamp: 1792082067,
+      verifiedAgeSeconds: 96,
+      verifiedHeadWallOffsetSeconds: -1,
     },
     chainlinkAlternatives: [
       {
@@ -437,10 +492,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 6,
         description: "ETH / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073709632407",
-        verifiedAnswer: "269570616817",
-        verifiedUpdatedAt: 1789951589,
-        verifiedAgeSeconds: 45,
+        verifiedRoundId: "18446744073709636410",
+        verifiedAnswer: "242266066930",
+        verifiedUpdatedAt: 1792081933,
+        verifiedHeadBlock: 52646361,
+        verifiedHeadTimestamp: 1792082069,
+        verifiedAgeSeconds: 136,
+        verifiedHeadWallOffsetSeconds: -1,
       },
       {
         proxyAddress: "0x5731Ae06077c79A3B292498940211E0aE7130bd3",
@@ -457,10 +515,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 6,
         description: "ETH / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073709610737",
-        verifiedAnswer: "2696428035090000000000",
-        verifiedUpdatedAt: 1789951593,
-        verifiedAgeSeconds: 41,
+        verifiedRoundId: "18446744073709614763",
+        verifiedAnswer: "2422999630240000000000",
+        verifiedUpdatedAt: 1792081925,
+        verifiedHeadBlock: 52646361,
+        verifiedHeadTimestamp: 1792082069,
+        verifiedAgeSeconds: 144,
+        verifiedHeadWallOffsetSeconds: 0,
       },
     ],
     chainlinkRejections: [
@@ -479,7 +540,7 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
     pythRejection: null,
     note: null,
     directoryUrl: "https://reference-data-directory.vercel.app/feeds-ethereum-mainnet-base-1.json",
-    verifiedEndpoint: "https://8453.rpc.thirdweb.com",
+    verifiedEndpoint: "https://base.drpc.org",
   },
   4663: {
     chainId: 4663,
@@ -507,10 +568,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "ETH / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073709553929",
-      verifiedAnswer: "269695646709",
-      verifiedUpdatedAt: 1789951599,
-      verifiedAgeSeconds: 35,
+      verifiedRoundId: "18446744073709554350",
+      verifiedAnswer: "242677439148",
+      verifiedUpdatedAt: 1792081624,
+      verifiedHeadBlock: 89371026,
+      verifiedHeadTimestamp: 1792082071,
+      verifiedAgeSeconds: 447,
+      verifiedHeadWallOffsetSeconds: 0,
     },
     chainlinkAlternatives: [
     ],
@@ -558,10 +622,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "ETH / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073709564033",
-      verifiedAnswer: "269830698475",
-      verifiedUpdatedAt: 1789951595,
-      verifiedAgeSeconds: 39,
+      verifiedRoundId: "18446744073709570335",
+      verifiedAnswer: "242323362651",
+      verifiedUpdatedAt: 1792081941,
+      verifiedHeadBlock: 58583662,
+      verifiedHeadTimestamp: 1792082073,
+      verifiedAgeSeconds: 132,
+      verifiedHeadWallOffsetSeconds: 0,
     },
     chainlinkAlternatives: [
     ],
@@ -609,10 +676,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 4,
       description: "ETH / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073709586016",
-      verifiedAnswer: "269159000000",
-      verifiedUpdatedAt: 1789950031,
-      verifiedAgeSeconds: 1603,
+      verifiedRoundId: "18446744073709586422",
+      verifiedAnswer: "242651249895",
+      verifiedUpdatedAt: 1792081633,
+      verifiedHeadBlock: 32333345,
+      verifiedHeadTimestamp: 1792082072,
+      verifiedAgeSeconds: 439,
+      verifiedHeadWallOffsetSeconds: -2,
     },
     chainlinkAlternatives: [
     ],
@@ -660,10 +730,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "OKB / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073709578447",
-      verifiedAnswer: "11861502000",
-      verifiedUpdatedAt: 1789949592,
-      verifiedAgeSeconds: 2042,
+      verifiedRoundId: "18446744073709579091",
+      verifiedAnswer: "11757774000",
+      verifiedUpdatedAt: 1792081096,
+      verifiedHeadBlock: 73313039,
+      verifiedHeadTimestamp: 1792082075,
+      verifiedAgeSeconds: 979,
+      verifiedHeadWallOffsetSeconds: -1,
     },
     chainlinkAlternatives: [
     ],
@@ -711,10 +784,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "HYPE / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073709576963",
-      verifiedAnswer: "9396967900",
-      verifiedUpdatedAt: 1789949143,
-      verifiedAgeSeconds: 2491,
+      verifiedRoundId: "18446744073709577806",
+      verifiedAnswer: "8125647204",
+      verifiedUpdatedAt: 1792081110,
+      verifiedHeadBlock: 48622494,
+      verifiedHeadTimestamp: 1792082077,
+      verifiedAgeSeconds: 967,
+      verifiedHeadWallOffsetSeconds: -1,
     },
     chainlinkAlternatives: [
       {
@@ -732,10 +808,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 6,
         description: "HYPE / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073709567555",
-        verifiedAnswer: "94125707000000000000",
-        verifiedUpdatedAt: 1789949644,
-        verifiedAgeSeconds: 1990,
+        verifiedRoundId: "18446744073709568405",
+        verifiedAnswer: "80916400000000000000",
+        verifiedUpdatedAt: 1792081654,
+        verifiedHeadBlock: 48622494,
+        verifiedHeadTimestamp: 1792082077,
+        verifiedAgeSeconds: 423,
+        verifiedHeadWallOffsetSeconds: 0,
       },
     ],
     chainlinkRejections: [
@@ -782,10 +861,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "MON / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073710125098",
-      verifiedAnswer: "2532701",
-      verifiedUpdatedAt: 1789951600,
-      verifiedAgeSeconds: 34,
+      verifiedRoundId: "18446744073710178611",
+      verifiedAnswer: "2335100",
+      verifiedUpdatedAt: 1792082069,
+      verifiedHeadBlock: 113662099,
+      verifiedHeadTimestamp: 1792082079,
+      verifiedAgeSeconds: 10,
+      verifiedHeadWallOffsetSeconds: 1,
     },
     chainlinkAlternatives: [
       {
@@ -803,10 +885,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 6,
         description: "MON / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073709737180",
-        verifiedAnswer: "25330000000000000",
-        verifiedUpdatedAt: 1789951611,
-        verifiedAgeSeconds: 23,
+        verifiedRoundId: "18446744073709773170",
+        verifiedAnswer: "23380000000000000",
+        verifiedUpdatedAt: 1792082077,
+        verifiedHeadBlock: 113662099,
+        verifiedHeadTimestamp: 1792082079,
+        verifiedAgeSeconds: 2,
+        verifiedHeadWallOffsetSeconds: 0,
       },
     ],
     chainlinkRejections: [
@@ -853,10 +938,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "XPL / USD",
       codeSize: 9571,
-      verifiedRoundId: "18446744073709595631",
-      verifiedAnswer: "9112273",
-      verifiedUpdatedAt: 1789951551,
-      verifiedAgeSeconds: 83,
+      verifiedRoundId: "18446744073709598407",
+      verifiedAnswer: "8367439",
+      verifiedUpdatedAt: 1792082037,
+      verifiedHeadBlock: 35140706,
+      verifiedHeadTimestamp: 1792082080,
+      verifiedAgeSeconds: 43,
+      verifiedHeadWallOffsetSeconds: 0,
     },
     chainlinkAlternatives: [
     ],
@@ -936,10 +1024,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 6,
       description: "USDC / USD",
       codeSize: 9571,
-      verifiedRoundId: "36893488147419103291",
-      verifiedAnswer: "99988744",
-      verifiedUpdatedAt: 1789917428,
-      verifiedAgeSeconds: 34206,
+      verifiedRoundId: "36893488147419103316",
+      verifiedAnswer: "99992028",
+      verifiedUpdatedAt: 1792077876,
+      verifiedHeadBlock: 26121368,
+      verifiedHeadTimestamp: 1792082081,
+      verifiedAgeSeconds: 4205,
+      verifiedHeadWallOffsetSeconds: 0,
     },
     chainlinkAlternatives: [
     ],
@@ -987,10 +1078,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
       contractVersion: 4,
       description: "ETH / USD",
       codeSize: 6992,
-      verifiedRoundId: "18446744073709587825",
-      verifiedAnswer: "268291890239",
-      verifiedUpdatedAt: 1789949688,
-      verifiedAgeSeconds: 1946,
+      verifiedRoundId: "18446744073709588437",
+      verifiedAnswer: "243819620000",
+      verifiedUpdatedAt: 1792080360,
+      verifiedHeadBlock: 11921648,
+      verifiedHeadTimestamp: 1792082076,
+      verifiedAgeSeconds: 1716,
+      verifiedHeadWallOffsetSeconds: -6,
     },
     chainlinkAlternatives: [
       {
@@ -1008,10 +1102,13 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
         contractVersion: 4,
         description: "ETH / USD",
         codeSize: 9571,
-        verifiedRoundId: "18446744073709577579",
-        verifiedAnswer: "267346596993",
-        verifiedUpdatedAt: 1789949616,
-        verifiedAgeSeconds: 2018,
+        verifiedRoundId: "18446744073709578190",
+        verifiedAnswer: "244085370032",
+        verifiedUpdatedAt: 1792080432,
+        verifiedHeadBlock: 11921648,
+        verifiedHeadTimestamp: 1792082076,
+        verifiedAgeSeconds: 1644,
+        verifiedHeadWallOffsetSeconds: -6,
       },
     ],
     chainlinkRejections: [
@@ -1031,6 +1128,60 @@ export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {
     note: "Sepolia's Chainlink ETH/USD feed prices REAL ether, not Sepolia ether, which has no market price at all. The feed is recorded because it exists and was verified; the resolver refuses to spend it on a USD figure for a testnet unless a caller opts in.",
     directoryUrl: "https://reference-data-directory.vercel.app/feeds-ethereum-testnet-sepolia.json",
     verifiedEndpoint: "https://11155111.rpc.thirdweb.com",
+  },
+  84532: {
+    chainId: 84532,
+    chainKey: "baseSepolia",
+    chainName: "Base Sepolia",
+    testnet: true,
+    native: {
+      symbol: "ETH",
+      decimals: 18,
+      inferred: false,
+      source: "chainid.network/chains.json id 84532 (Base Sepolia Testnet), nativeCurrency {\"name\":\"Sepolia Ether\",\"symbol\":\"ETH\",\"decimals\":18}",
+    },
+    chainlink: {
+      proxyAddress: "0x4aDC67696bA383F43DD60A9e78F2C97Fbbfc7cb1",
+      secondaryProxyAddress: null,
+      path: "eth-usd",
+      variant: "canonical",
+      feedName: "ETH / USD",
+      assetName: null,
+      marketHours: "Crypto",
+      feedCategory: null,
+      decimals: 8,
+      heartbeat: 1200,
+      thresholdPercent: 0.15,
+      contractVersion: 4,
+      description: "ETH / USD",
+      codeSize: 9571,
+      verifiedRoundId: "18446744073709838021",
+      verifiedAnswer: "242547067401",
+      verifiedUpdatedAt: 1792082068,
+      verifiedHeadBlock: 48156897,
+      verifiedHeadTimestamp: 1792082082,
+      verifiedAgeSeconds: 14,
+      verifiedHeadWallOffsetSeconds: -1,
+    },
+    chainlinkAlternatives: [
+    ],
+    chainlinkRejections: [
+    ],
+    pyth: {
+      priceFeedId: "0xff61491a931112ddf1bd8147cd1b641375f79f5825126d665480874634fd0ace",
+      hermesSymbol: "Crypto.ETH/USD",
+      displaySymbol: "ETHUSD",
+      description: "ETHEREUM / US DOLLAR",
+      priceCheck: "v2/updates/price/latest returned HTTP 401 (unauthorized — this endpoint is no longer keyless)",
+      verifiedPrice: null,
+      verifiedExpo: null,
+      verifiedPublishTime: null,
+      verifiedAgeSeconds: null,
+    },
+    pythRejection: null,
+    note: "Base Sepolia's Chainlink ETH/USD feed prices REAL ether, not Base Sepolia ether, which has no market price at all. Recorded because it exists and was verified; the resolver refuses to spend it on a USD figure for a testnet unless a caller opts in (same rule as Sepolia).",
+    directoryUrl: "https://reference-data-directory.vercel.app/feeds-ethereum-testnet-sepolia-base-1.json",
+    verifiedEndpoint: "https://84532.rpc.thirdweb.com",
   },
   2201: {
     chainId: 2201,

@@ -25,7 +25,7 @@
    two issuers' versions of the same underlying — Base has Coinbase and Dinari, HyperEVM
    has three — the join returns EVERY candidate and refuses to choose, because choosing
    would mean asserting that one issuer's token tracks another issuer's feed. The
-   deployment runbook picks, and records why.
+   deployment plan picks, and records why.
    ============================================================================ */
 
 import { stockFeedsFor, type StockFeedRecord } from "../deployments/stockFeeds.js";
@@ -55,7 +55,7 @@ export interface StockPairReadiness {
   readonly rebasingTokens: readonly StockTokenRecord[];
   /** Empty exactly when a pool could be configured from these two tables today. */
   readonly blockers: readonly StockPairBlocker[];
-  /** One line per blocker, in the words a runbook needs. */
+  /** One line per blocker, in the words a deployment plan needs. */
   readonly notes: readonly string[];
 }
 
@@ -129,7 +129,7 @@ export function stockPairReadiness(chainId: number, ticker: string): StockPairRe
   if (feeds.length > 1 || tokens.length > 1) {
     blockers.push("ambiguous-issuer");
     notes.push(
-      `chain ${chainId} carries ${feeds.length} feed(s) and ${tokens.length} usable token(s) for ${t}. Pairing one issuer's token with another issuer's feed is an assertion nobody has checked; the runbook must name the pair and say why.`,
+      `chain ${chainId} carries ${feeds.length} feed(s) and ${tokens.length} usable token(s) for ${t}. Pairing one issuer's token with another issuer's feed is an assertion nobody has checked; the deployment plan must name the pair and say why.`,
     );
   }
 

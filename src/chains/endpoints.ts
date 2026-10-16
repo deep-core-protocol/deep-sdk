@@ -620,6 +620,24 @@ export const CHAIN_RPCS = {
    * the nodes serve no block older than roughly head-100_000, so identity here rests
    * on the live cross-check.
    */
+  /* Base Sepolia (84532): DeepCore's testnet from 2026-10-15 (owner; Ethereum Sepolia reprices contract creation
+     ~7.6x and caps a transaction at ~16.7 M gas). Probed 2026-10-15 by scripts/probe-rpcs.mjs: genesis
+     0x0dcc9e08…34e4 on publicnode, thirdweb and nodies; the other two by the cross-check (sepolia.base.org prunes
+     history below block 46.5 M). eth_getLogs range per request differs a lot: thirdweb and publicnode answered
+     500 blocks (99 WETH logs, the same on both), sepolia.base.org caps at 200, nodies at 50, drpc's free plan
+     refused. Dropped: tenderly and meowrpc (fetch failed), blockpi (503), onfinality (429), 1rpc (400). */
+  baseSepolia: {
+    chainId: 84532,
+    name: 'Base Sepolia',
+    supportsEip1153: true,
+    endpoints: [
+      { url: 'https://84532.rpc.thirdweb.com', latencyMs: 48, eip1153: true },
+      { url: 'https://base-sepolia.drpc.org', latencyMs: 65, eip1153: true },
+      { url: 'https://sepolia.base.org', latencyMs: 104, eip1153: true },
+      { url: 'https://base-sepolia-public.nodies.app', latencyMs: 108, eip1153: true },
+      { url: 'https://base-sepolia-rpc.publicnode.com', latencyMs: 162, eip1153: true },
+    ],
+  },
   stableTestnet: {
     chainId: 2201,
     name: 'Stable Testnet',

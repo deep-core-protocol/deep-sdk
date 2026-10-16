@@ -1,6 +1,6 @@
 {
   "name": "@deepcoreprotocol/sdk",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "MIT TypeScript SDK for DeepCoreProtocol — deployed contract addresses, pool key/id derivation, hook permission bitmaps, typed events, and the DeepCore registry. Build hooks without importing GPL Solidity.",
   "license": "MIT",
   "homepage": "https://deepcore.fun",
@@ -84,6 +84,16 @@
       "import": "./dist/trading/index.js",
       "default": "./dist/trading/index.js"
     },
+    "./orders": {
+      "types": "./dist/orders/index.d.ts",
+      "import": "./dist/orders/index.js",
+      "default": "./dist/orders/index.js"
+    },
+    "./vaults": {
+      "types": "./dist/vaults/index.d.ts",
+      "import": "./dist/vaults/index.js",
+      "default": "./dist/vaults/index.js"
+    },
     "./router": {
       "types": "./dist/router/index.d.ts",
       "import": "./dist/router/index.js",
@@ -94,9 +104,11 @@
   },
   "files": [
     "dist",
+    "prompts",
     "schema.graphql",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "sideEffects": false,
   "engines": {

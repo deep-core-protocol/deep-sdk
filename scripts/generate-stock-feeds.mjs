@@ -44,6 +44,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { FUTURE_SKEW_SECONDS, HEAD_WALL_TOLERANCE_SECONDS, judgeRoundFreshness, readRoundBesideHead } from "./lib/feedFreshness.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const CACHE_DIR = join(HERE, ".cache", "chainlink");
@@ -104,8 +106,9 @@ const EQUITY_CLASSES = new Set(["Equity", "TokenizedEquities", "ETF"]);
 
      STRUCTURAL — code at the address, the three ABI methods answer, `decimals()`
        agrees with the directory, `description()` names the asset, the answer is
-       positive, the round is complete and not in the future. A failure here is a
-       REJECTION: the record would be a claim nobody checked.
+       positive, the round is complete and not past the chain head it was read
+       against by more than `FUTURE_SKEW_SECONDS`. A failure here is a REJECTION:
+       the record would be a claim nobody checked.
 
      FRESHNESS — age against the heartbeat. Recorded on the record as
        `freshAtVerification` and `verifiedAgeSeconds`, never a rejection. Stale
@@ -120,8 +123,35 @@ const EQUITY_CLASSES = new Set(["Equity", "TokenizedEquities", "ETF"]);
    means the band and the session must be configured together, not separately.
    --------------------------------------------------------------------------- */
 
-/** Clock skew tolerated on `updatedAt` before it is called a future timestamp. */
-const FUTURE_SKEW_SECONDS = 120;
+/* ---------------------------------------------------------------------------
+   THE REFERENCE CLOCK IS THE CHAIN HEAD READ BESIDE THE ROUND, NOT THE WALL
+   CLOCK AT PROCESS START. Ported 2026-10-15 from the native-feed generator.
+   ---------------------------------------------------------------------------
+   This generator used to capture `nowSeconds` once, before the chain loop, and judge
+   every feed's `updatedAt` against it: `verifiedAgeSeconds` was `nowSeconds −
+   updatedAt`. The loop takes minutes (five chains with feeds, three to five RPC reads
+   per candidate, ~90 candidates), so every age was UNDER-reported by however long the
+   run had been going when that feed was read — the one direction an age must not err
+   in — and a round published during the run would have read as "in the future" and
+   been REJECTED, which is exactly what happened to a MON/USD aggregator in
+   `generate-native-feeds.mjs` the same day (CLAUDE.md, "CORRECTED the same day").
+   It did not bite here only because every run so far fell outside a trading session.
+
+   Now each round is judged against the timestamp of the chain's latest block, read
+   from the SAME endpoint right after `latestRoundData()` (`readRoundBesideHead`), and
+   the wall clock at that read is recorded beside it. A head more than
+   `HEAD_WALL_TOLERANCE_SECONDS` from the wall clock is refused as a reference and the
+   next endpoint is tried (a load-balanced HyperEVM endpoint served a head an hour
+   behind that day). Every record carries the head (`verifiedHeadBlock`,
+   `verifiedHeadTimestamp`) and the head-to-wall offset, so the verdict re-derives
+   from the row alone. The rule and its constants live in `scripts/lib/feedFreshness.mjs`
+   and are unit-tested in `test/feedFreshness.test.ts`; nothing here restates a number.
+
+   The POLICY above is unchanged: `future` and `noHeartbeat` reject, `stale` is
+   recorded. `freshAtVerification` stays `ageSeconds <= heartbeat` with NO grace — it
+   is a reading, not a verdict, and a reader comparing it with `heartbeat` must get the
+   same answer the row states.
+   --------------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------- arguments */
 
@@ -233,12 +263,18 @@ async function withFallback(clients, fn) {
  *   code      — `configureFeed` calls `decimals()`; an EOA answers nothing
  *   decimals  — the adapter stores it and re-checks it on every refresh (`DecimalsChanged`)
  *   answer    — `NonPositiveAnswer`, `IncompleteRound`
- *   age       — `AnswerTooOld(updatedAt, heartbeat, now)`
+ *   age       — `AnswerTooOld(updatedAt, heartbeat, now)`; here measured against the
+ *               chain head read beside the round, and RECORDED rather than enforced
+ *               (see the two notes above)
  *   ticker    — not the adapter's business, but it is OUR claim: a record that says NVDA
  *               and a contract that describes itself as something else is the one error
  *               nobody downstream can catch.
+ *
+ * The round and the head are read in ONE fallback step so they come from the same
+ * endpoint, head second: the head can then only be at or past the block the `eth_call`
+ * was served at, so a legitimate round reads "ahead" by at most node-to-node skew.
  */
-async function verifyAggregator(clients, address, entry, ticker, nowSeconds) {
+async function verifyAggregator(clients, address, entry, ticker) {
   const out = { address, ok: false, reasons: [] };
   let code;
   try {
@@ -253,7 +289,7 @@ async function verifyAggregator(clients, address, entry, ticker, nowSeconds) {
   }
   out.codeSize = (code.length - 2) / 2;
 
-  for (const fn of ["decimals", "description", "latestRoundData"]) {
+  for (const fn of ["decimals", "description"]) {
     try {
       const { value } = await withFallback(clients, (c) =>
         c.readContract({ address, abi: AGGREGATOR_ABI, functionName: fn }),
@@ -263,15 +299,29 @@ async function verifyAggregator(clients, address, entry, ticker, nowSeconds) {
       out.reasons.push(`${fn}() failed: ${errText(e)}`);
     }
   }
+  // The round and the head it is judged against, from the same endpoint, head second.
+  // `readRoundBesideHead` throws on a head that disagrees with the wall clock, which
+  // makes `withFallback` try the next endpoint rather than judge against a stale backend.
+  let round;
+  try {
+    const { value, endpoint } = await withFallback(clients, (c) =>
+      readRoundBesideHead(c, { address, abi: AGGREGATOR_ABI }),
+    );
+    round = value;
+    out.roundEndpoint = endpoint;
+  } catch (e) {
+    out.reasons.push(`latestRoundData()/head read failed on every endpoint: ${errText(e)}`);
+  }
   if (out.reasons.length) return out;
 
   out.decimals = Number(out.decimals);
-  const [roundId, answer, startedAt, updatedAt] = out.latestRoundData;
+  const [roundId, answer, startedAt, updatedAt] = round.data;
   out.roundId = roundId.toString();
   out.answer = answer.toString();
   out.updatedAt = Number(updatedAt);
-  out.ageSeconds = nowSeconds - out.updatedAt;
-  delete out.latestRoundData;
+  out.headBlock = round.headBlock;
+  out.headTimestamp = round.headTimestamp;
+  out.headWallOffsetSeconds = round.headWallOffsetSeconds;
 
   if (out.decimals !== Number(entry.decimals)) {
     out.reasons.push(`decimals ${out.decimals} on chain, directory says ${entry.decimals}`);
@@ -291,11 +341,20 @@ async function verifyAggregator(clients, address, entry, ticker, nowSeconds) {
   if (answer <= 0n) out.reasons.push(`non-positive answer ${answer}`);
   if (roundId === 0n) out.reasons.push("round id 0");
   if (startedAt === 0n || updatedAt === 0n) out.reasons.push("incomplete round (startedAt or updatedAt is 0)");
-  if (out.updatedAt > nowSeconds + FUTURE_SKEW_SECONDS) {
-    out.reasons.push(`updatedAt ${out.updatedAt} is in the future (now ${nowSeconds})`);
-  }
+
+  // Future and age, both against the head read beside the round. The rule and its
+  // numbers are in scripts/lib/feedFreshness.mjs and unit-tested there. `future` and
+  // `noHeartbeat` reject; `stale` is deliberately NOT read here — see the notes above.
   const heartbeat = Number(entry.heartbeat ?? 0);
-  if (!heartbeat) out.reasons.push("directory gives no heartbeat");
+  const verdict = judgeRoundFreshness({
+    updatedAt: out.updatedAt,
+    referenceTimestamp: out.headTimestamp,
+    heartbeatSeconds: heartbeat,
+  });
+  out.ageSeconds = verdict.ageSeconds;
+  out.aheadSeconds = verdict.aheadSeconds;
+  if (verdict.future) out.reasons.push(`${verdict.reasons[0]} [head block ${out.headBlock}]`);
+  if (verdict.noHeartbeat) out.reasons.push("directory gives no heartbeat");
 
   // Freshness: recorded, never a rejection. See the note at the top of this file.
   out.fresh = heartbeat > 0 && out.ageSeconds <= heartbeat;
@@ -306,8 +365,9 @@ async function verifyAggregator(clients, address, entry, ticker, nowSeconds) {
 
 /* --------------------------------------------------------------------- run */
 
+// The run's instant is PROVENANCE (which weekday the reads fell on), never the clock a
+// round is judged against: that is the chain head read beside each round.
 const startedAt = new Date();
-const nowSeconds = Math.floor(startedAt.getTime() / 1000);
 const chains = [];
 
 for (const key of CHAIN_KEYS) {
@@ -369,7 +429,7 @@ for (const key of CHAIN_KEYS) {
   for (const entry of candidates) {
     const proxy = getAddress(entry.proxyAddress);
     const { ticker, rule } = deriveTicker(entry.docs.baseAsset, entry.assetName);
-    const v = await verifyAggregator(clients, proxy, entry, ticker, nowSeconds);
+    const v = await verifyAggregator(clients, proxy, entry, ticker);
     const shared = {
       ticker,
       tickerRule: rule,
@@ -398,7 +458,7 @@ for (const key of CHAIN_KEYS) {
     // deployer may reasonably choose, so shipping it unread would be shipping a guess.
     let secondary = null;
     if (shared.secondaryProxyAddress) {
-      const s = await verifyAggregator(clients, shared.secondaryProxyAddress, entry, ticker, nowSeconds);
+      const s = await verifyAggregator(clients, shared.secondaryProxyAddress, entry, ticker);
       secondary = s.ok ? shared.secondaryProxyAddress : null;
       if (!s.ok) row.rejected.push({ ...shared, proxyAddress: shared.secondaryProxyAddress, secondaryProxyAddress: null, reasons: [`secondary proxy: ${s.reasons.join("; ")}`] });
     }
@@ -411,12 +471,16 @@ for (const key of CHAIN_KEYS) {
         answer: v.answer,
         roundId: v.roundId,
         updatedAt: v.updatedAt,
+        headBlock: v.headBlock,
+        headTimestamp: v.headTimestamp,
         ageSeconds: v.ageSeconds,
+        aheadSeconds: v.aheadSeconds,
+        headWallOffsetSeconds: v.headWallOffsetSeconds,
         fresh: v.fresh,
       },
     });
     console.error(
-      `  ok     ${key} ${ticker.padEnd(8)} ${proxy} "${v.description}" age ${v.ageSeconds}s${v.fresh ? "" : "  STALE (past heartbeat)"}`,
+      `  ok     ${key} ${ticker.padEnd(8)} ${proxy} "${v.description}" age ${v.ageSeconds}s head-wall ${v.headWallOffsetSeconds}s${v.fresh ? "" : "  STALE (past heartbeat)"}`,
     );
   }
   row.feeds.sort(
@@ -442,8 +506,12 @@ console.log(
 );
 for (const r of chains) {
   const fresh = r.feeds.filter((f) => f.onChain.fresh).length;
+  // The head-to-wall offsets seen on this chain, as a range: the measurement behind
+  // `HEAD_WALL_TOLERANCE_SECONDS`, repeated on every run so drift shows in the log.
+  const offsets = r.feeds.map((f) => f.onChain.headWallOffsetSeconds);
+  const headWall = offsets.length ? `  head-wall ${Math.min(...offsets)}..${Math.max(...offsets)}s` : "";
   console.log(
-    `${pad(r.key, 11)}${pad(r.chainId, 8)}${pad(r.directoryEntries ?? "-", 9)}${pad(r.candidates, 8)}${pad(r.feeds.length, 10)}${pad(`${fresh}/${r.feeds.length}`, 7)}${r.rejected.length}${r.note ? `  ${r.note}` : ""}`,
+    `${pad(r.key, 11)}${pad(r.chainId, 8)}${pad(r.directoryEntries ?? "-", 9)}${pad(r.candidates, 8)}${pad(r.feeds.length, 10)}${pad(`${fresh}/${r.feeds.length}`, 7)}${r.rejected.length}${headWall}${r.note ? `  ${r.note}` : ""}`,
   );
 }
 if (REPORT_ONLY) process.exit(0);
@@ -474,7 +542,10 @@ function emitFeed(f) {
       description: ${q(f.onChain.description)},
       verifiedAnswer: ${q(f.onChain.answer)},
       verifiedUpdatedAt: ${f.onChain.updatedAt},
+      verifiedHeadBlock: ${f.onChain.headBlock},
+      verifiedHeadTimestamp: ${f.onChain.headTimestamp},
       verifiedAgeSeconds: ${f.onChain.ageSeconds},
+      verifiedHeadWallOffsetSeconds: ${f.onChain.headWallOffsetSeconds},
       freshAtVerification: ${f.onChain.fresh ? "true" : "false"},
     },`;
 }
@@ -507,16 +578,25 @@ const header = `// SPDX-License-Identifier: MIT
    Regenerate with \`npm run generate:stockfeeds\`; \`--check\` fails when this file is
    stale. Every address below was READ FROM THE CHAIN on that day: the aggregator has
    code, \`decimals()\` agrees with the directory, \`description()\` names the asset, and
-   \`latestRoundData()\` returned a positive, complete, non-future round. A feed that
-   failed any of those is in \`STOCK_FEED_REJECTIONS\` with the reason, not here.
+   \`latestRoundData()\` returned a positive, complete round that was judged AGAINST THE
+   CHAIN'S OWN HEAD, read from the same endpoint right after it: at most
+   ${FUTURE_SKEW_SECONDS} s past that head's timestamp (a round further ahead of the
+   head it was read against is a feed lying about time). The reference is the head, NOT
+   the wall clock at the start of the run, which under-reported every age by the run's
+   elapsed time until 2026-10-15. Every row records that head (\`verifiedHeadBlock\`,
+   \`verifiedHeadTimestamp\`) and how far it sat from the wall clock at the read
+   (\`verifiedHeadWallOffsetSeconds\`, always within ±${HEAD_WALL_TOLERANCE_SECONDS} s or
+   the head would have been refused and the next endpoint read), so the verdict can be
+   re-derived from the row alone. A feed that failed any of those is in
+   \`STOCK_FEED_REJECTIONS\` with the reason, not here.
 
    FRESHNESS IS RECORDED, NOT ENFORCED. \`freshAtVerification\` says whether the round
-   was inside its own heartbeat at the instant of the read, and \`false\` is the NORMAL
-   answer for a tokenised-equity feed read outside its trading session: these feeds stop
-   when the market does. \`STOCK_FEEDS_VERIFIED_WEEKDAY\` is committed so a reader can
-   tell a weekend reading from a fault. A consumer must apply its own heartbeat check
-   against the chain — \`ChainlinkPriceBandAdapter\` does, and will revert \`AnswerTooOld\`
-   on any of these all weekend. See \`src/rwa/marketHours.ts\`.
+   was inside its own heartbeat at the head it was read against, and \`false\` is the
+   NORMAL answer for a tokenised-equity feed read outside its trading session: these
+   feeds stop when the market does. \`STOCK_FEEDS_VERIFIED_WEEKDAY\` is committed so a
+   reader can tell a weekend reading from a fault. A consumer must apply its own
+   heartbeat check against the chain — \`ChainlinkPriceBandAdapter\` does, and will
+   revert \`AnswerTooOld\` on any of these all weekend. See \`src/rwa/marketHours.ts\`.
 
    WHAT THE FEED IS ABOUT. \`prices\` separates a feed that prices the ISSUER'S TOKEN
    (\`tokenized-instrument\`) from one that prices the UNDERLYING SHARE
@@ -607,12 +687,30 @@ export interface StockFeedRecord {
   readonly verifiedAnswer: string;
   /** \`latestRoundData().updatedAt\` at verification (unix seconds). */
   readonly verifiedUpdatedAt: number;
-  /** How old that round was when it was read. */
+  /** The chain's latest block when the round was read, from the same endpoint, read right after it. */
+  readonly verifiedHeadBlock: number;
+  /** That block's timestamp: the reference clock the round was judged against. */
+  readonly verifiedHeadTimestamp: number;
+  /**
+   * \`verifiedHeadTimestamp − verifiedUpdatedAt\`: how old the round was IN CHAIN TIME
+   * when it was read. Never below \`−${FUTURE_SKEW_SECONDS}\`, or the row would not
+   * exist; a negative value is a round the endpoint served from a node past the one
+   * that served the head. Any size above that is a reading, not a fault — see
+   * \`freshAtVerification\`.
+   */
   readonly verifiedAgeSeconds: number;
   /**
-   * Whether \`verifiedAgeSeconds <= heartbeat\` AT THE MOMENT OF THE READ. \`false\` is
-   * normal for a tokenised-equity feed read outside its trading session — the market was
-   * shut — and says nothing about the feed now. NEVER render this as "live".
+   * \`verifiedHeadTimestamp − wall clock\` at the read: how far this chain's block clock
+   * sat from real time. Always within ±${HEAD_WALL_TOLERANCE_SECONDS} s, because a head
+   * further from the wall clock than that is refused as a reference and the next
+   * endpoint is read instead.
+   */
+  readonly verifiedHeadWallOffsetSeconds: number;
+  /**
+   * Whether \`verifiedAgeSeconds <= heartbeat\` AT THE HEAD THE ROUND WAS READ AGAINST.
+   * \`false\` is normal for a tokenised-equity feed read outside its trading session —
+   * the market was shut — and says nothing about the feed now. NEVER render this as
+   * "live".
    */
   readonly freshAtVerification: boolean;
 }
@@ -718,7 +816,10 @@ if (CHECK) {
   // everything EXCEPT them. A changed address, ticker or rejection still fails.
   const strip = (s) =>
     s
-      .replace(/^\s*(verified(Answer|UpdatedAt|AgeSeconds)|freshAtVerification):.*$/gm, "")
+      .replace(
+        /^\s*(verified(Answer|UpdatedAt|HeadBlock|HeadTimestamp|AgeSeconds|HeadWallOffsetSeconds)|freshAtVerification):.*$/gm,
+        "",
+      )
       .replace(/STOCK_FEEDS_VERIFIED_(AT|INSTANT|WEEKDAY) = "[^"]*"/g, "")
       .replace(/on \d{4}-\d{2}-\d{2} —/g, "");
   if (strip(current) !== strip(header)) {

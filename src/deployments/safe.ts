@@ -122,17 +122,29 @@ export const SAFE_CONTRACTS: Readonly<Record<number, SafeContracts>> = {
   4663: CANONICAL_1_4_1,
   8453: CANONICAL_1_4_1,
   11155111: CANONICAL_1_4_1,
+  /* Base Sepolia (84532), DeepCore's testnet from 2026-10-15: all nine read with code on 2026-10-15
+     (`cast code`, base-sepolia-rpc.publicnode.com at block 48,153,875: Safe 23,579 bytes · SafeL2 24,421 ·
+     SafeProxyFactory 3,054 · MultiSend 629 · MultiSendCallOnly 410 · CompatibilityFallbackHandler 5,637 ·
+     SignMessageLib 966 · CreateCall 1,099 · SimulateTxAccessor 850); both singletons answer
+     `VERSION() == "1.4.1"`. */
+  84532: CANONICAL_1_4_1,
 };
 
 /**
  * Chains where every canonical v1.5.0 contract was read with code (2026-10-12, sizes in the
  * constant's note). Sepolia is NOT listed: its 1.5.0 set has not been read.
+ *
+ * Base Sepolia (84532) read 2026-10-15 at block 48,153,875 (base-sepolia-rpc.publicnode.com): all nine
+ * sizes identical to the constant's note (21,451 / 22,231 / 3,321 / 640 / 421 / 6,294 / 966 / 1,099 / 850).
+ * The governance Safe `0xeEd9…8c8B` exists there (created by the testnet run, 123-byte proxy, VERSION 1.5.0,
+ * threshold 2), which is what makes this set the batch target on that chain.
  */
 export const SAFE_CONTRACTS_1_5_0: Readonly<Record<number, SafeContracts>> = {
   56: CANONICAL_1_5_0,
   999: CANONICAL_1_5_0,
   4663: CANONICAL_1_5_0,
   8453: CANONICAL_1_5_0,
+  84532: CANONICAL_1_5_0,
 };
 
 export const SAFE_CONTRACT_CHAIN_IDS: readonly number[] = Object.keys(SAFE_CONTRACTS).map(Number);

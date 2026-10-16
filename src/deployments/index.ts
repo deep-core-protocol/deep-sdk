@@ -142,6 +142,11 @@ export interface TokenInfo {
    */
   readonly isTestToken: boolean;
   /**
+   * One short line a UI shows beside the name when the name alone would mislead, e.g. a pegged
+   * token that carries the original issuer's name. Absent for almost every token.
+   */
+  readonly note?: string;
+  /**
    * A tokenised stock: an issuer-controlled security token. Present only when
    * true. What it means for a pool or a launch quoted in it (as read on chain
    * for issuer-controlled stock tokens): the issuer can pause transfers, burn from
@@ -277,6 +282,12 @@ export interface RwaDeployment {
   readonly manualPriceBandOracle?: Address | null;
   /** `PythPriceBandAdapter`: the band's reference from Pyth (pull oracle; `refresh` is permissionless). Owner: the Safe. */
   readonly pythPriceBandAdapter?: Address | null;
+  /**
+   * `ChainlinkCrossPriceBandAdapter`: the band's reference as (stock / USD) / (quote / USD), for a stock
+   * pool quoted in the native currency (or any quote not worth one dollar). Owner: the Safe. Optional in
+   * the type so records written before it existed stay valid.
+   */
+  readonly chainlinkCrossPriceBandAdapter?: Address | null;
 }
 
 
@@ -535,6 +546,35 @@ export interface DeepCoreDeployment {
   readonly dynamicFeeHook: Address | null;
   /** `DeepCoreBinDynamicFeeHook`: the Bin twin. `null` where not deployed. */
   readonly binDynamicFeeHook: Address | null;
+  /**
+   * `DeepCoreLiquidityRewardsHook` (CL, `packages/lp-rewards`): project-funded reward streams paid to
+   * in-range liquidity. Registers a REMOVAL callback, so `DeepCoreLPLocker` refuses its positions. The
+   * protocol takes a share of every funding inside an immutable cap (owner = the governance Safe).
+   * Optional in the type so records written before it existed stay valid; absent or `null` where not
+   * deployed.
+   *
+   * @experimental Preview: the contracts are not deployed on any chain yet; addresses are null until they are.
+   */
+  readonly lpRewardsHook?: Address | null;
+  /**
+   * `DeepCoreOracleHook` (CL, `packages/hooks/src/oracle`): the price oracle DeepCore. A pool born on it
+   * keeps a truncated time-weighted average tick that any contract reads through `IDeepCoreOracle`
+   * (`consult`, `observe`, `kind() == keccak256("deepcore.oracle.truncated-twap.v1")`). No role, no fee,
+   * holds nothing. A hook is part of a pool's identity, so only pools CREATED on it have the oracle.
+   * Optional in the type so records written before it existed stay valid; absent or `null` where not
+   * deployed.
+   *
+   * @experimental Preview: the contracts are not deployed on any chain yet; addresses are null until they are.
+   */
+  readonly oracleHook?: Address | null;
+  /**
+   * `DeepCoreDexHook` (CL, `packages/hooks/src/dex`): the accepted dynamic fee (`DeepCoreDynamicFeeHook`)
+   * with the same oracle compiled in, so a dynamic-fee pool born on it also answers `IDeepCoreOracle`.
+   * Optional in the type; absent or `null` where not deployed.
+   *
+   * @experimental Preview: the contracts are not deployed on any chain yet; addresses are null until they are.
+   */
+  readonly dexHook?: Address | null;
 
   /**
    * `DeepCoreSplitFactory` (Team splits): clones a `DeepCoreSplit` per team. Owner =
@@ -562,6 +602,43 @@ export interface DeepCoreDeployment {
   readonly tokenLock: Address | null;
   readonly multisend: Address | null;
   readonly dropFactory: Address | null;
+
+  /**
+   * Limit orders and DCA (`packages/orders`). Each charges a bps protocol fee on
+   * what it produces, frozen per order or plan, inside an immutable cap (owner =
+   * the governance Safe; increases behind a notice, decreases immediate; paid
+   * only to the Safe through the permissionless `flushProtocolFees`). Executing a
+   * crossed order or a due slice is permissionless and pays the executor the tip
+   * its maker escrowed. `null` where not deployed.
+   *
+   * - `rangeOrders`: `DeepCoreRangeOrders`, CL limit orders as one-spacing range positions.
+   * - `dca`: `DeepCoreDCA`, scheduled exact-input swaps through one pool the user names.
+   *
+   * @experimental Preview: the contracts are not deployed on any chain yet; addresses are null until they are.
+   */
+  readonly rangeOrders: Address | null;
+  readonly dca: Address | null;
+
+  /**
+   * `DeepCoreVaultFactory` (`packages/vaults`): creates managed-liquidity vaults (EIP-1167 clones of
+   * `DeepCoreManagedVault`), each holding a concentrated position in one CL pool whose range follows a
+   * pool oracle's TWAP. Owner = the governance Safe, fee-only (creation fee and the performance fee new
+   * vaults freeze, inside immutable caps). Optional in the type so records written before it existed stay
+   * valid; absent or `null` where not deployed.
+   *
+   * @experimental Preview: the contracts are not deployed on any chain yet; addresses are null until they are.
+   */
+  readonly vaultFactory?: Address | null;
+
+  /**
+   * `DeepCoreTunerGate` (`packages/governance`): DeepCore's own gate in front of an agent key that tunes
+   * DeepCore-owned dynamic-fee pools inside bounded policies. Owner = the governance Safe; born with no
+   * agent and no policy (each is proposed behind the gate's notice). Optional in the type so records
+   * written before it existed stay valid; absent or `null` where not deployed.
+   *
+   * @experimental Preview: the contracts are not deployed on any chain yet; addresses are null until they are.
+   */
+  readonly tunerGate?: Address | null;
 
   /**
    * Stock / RWA hooks and oracles. See `RwaDeployment`. Every slot is `null` on a chain where
@@ -629,7 +706,8 @@ const DEPLOYMENTS_TABLE = {
      not DeepCore's and must never be re-added.
      -------------------------------------------------------------------------- */
 
-  /* Written from the deployment receipts and on-chain reads. */
+  /* Written by ops/deploy/tools/make-record.mjs from the runner's state file and on-chain reads: every address
+     holds code on this chain, and every contract not deployed here is `null`. */
   999: {
     chainId: 999,
     key: "hyperevm",
@@ -686,17 +764,25 @@ const DEPLOYMENTS_TABLE = {
     tokenLock: "0x78787661C6B2D4bdd447456e47304F9E092D8678",
     multisend: "0x7878D62c54e6C7a073E6114F478774277F595878",
     dropFactory: "0x7878D474C2797c4C07ef06F848487fEE6aDbCA78",
+    rangeOrders: "0x787888B35e67DC155E612c862c6A2f60f512D378",
+    dca: "0x7878947dC3a69d03C3d9431d9bDC536d1e0A0878",
+    lpRewardsHook: "0x7878081C835d9069FacDb861563cf3cA8A7c2678",
+    oracleHook: "0x7878cB78E32d815e515E3d7b98463E8aFc996178",
+    dexHook: "0x7878D43C5065F82608cdE151B46946A0a6B7E778",
+    tunerGate: "0x7878e7c192967621aaece271A41F050a337C6578",
+    vaultFactory: "0x787889b36FEc39564Dda016572D68d641e455778",
     rwa: {
       marketHoursHook: null,
       stockPairHook: null,
       chainlinkPriceBandAdapter: null,
       allowlistComplianceOracle: null,
+      chainlinkCrossPriceBandAdapter: null,
     },
     durationClocks: { revShareHook: "timestamp", launchpadKit: null, launchGuardHook: null },
     revShareHooks: [
       { address: "0x7878133cE09e979aa333ecAbB19d8c10F8BC7078", durationClock: "timestamp", pendingShape: "timestamp-with-expiry", status: "current", note: "First deployment." },
     ],
-    /* Read on chain 2026-10-10: name(), symbol(), decimals(). */
+    /* Read on chain: name(), symbol(), decimals(). */
     tokens: [
       { address: "0x5555555555555555555555555555555555555555", symbol: "WHYPE", name: "Wrapped HYPE", decimals: 18, isTestToken: false },
       { address: "0xB8CE59FC3717ada4C02eaDF9682A9e934F625ebb", symbol: "USD₮0", name: "USD₮0", decimals: 6, isTestToken: false },
@@ -761,6 +847,8 @@ const DEPLOYMENTS_TABLE = {
     tokenLock: "0x78787661C6B2D4bdd447456e47304F9E092D8678",
     multisend: "0x7878D62c54e6C7a073E6114F478774277F595878",
     dropFactory: "0x7878D474C2797c4C07ef06F848487fEE6aDbCA78",
+    rangeOrders: null,
+    dca: null,
     rwa: {
       marketHoursHook: null,
       stockPairHook: null,
@@ -774,11 +862,15 @@ const DEPLOYMENTS_TABLE = {
     /* Read on chain: name(), symbol(), decimals(). */
     tokens: [
       { address: "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c", symbol: "WBNB", name: "Wrapped BNB", decimals: 18, isTestToken: false },
+      /* Binance-Peg USDT: issued by Binance against USDT it holds, NOT by Tether (owner, 2026-10-13: list it,
+         labelled). Read on chain 2026-10-13 via bsc-dataseed.bnbchain.org: name() "Tether USD", symbol() "USDT",
+         decimals() 18 (not 6), getOwner() 0xF68a…f62d. `name` is the token's own (the token list is checked against the chain); `note` says what it is. */
+      { address: "0x55d398326f99059fF775485246999027B3197955", symbol: "USDT", name: "Tether USD", decimals: 18, isTestToken: false, note: "Binance-Peg, not issued by Tether" },
     ],
   },
 
-  /* Written from on-chain reads: every address holds code on this chain, and every contract not
-     deployed here is `null`. */
+  /* Written by ops/deploy/tools/make-record.mjs from the runner's state file and on-chain reads: every address
+     holds code on this chain, and every contract not deployed here is `null`. */
   4663: {
     chainId: 4663,
     key: "robinhood",
@@ -835,11 +927,19 @@ const DEPLOYMENTS_TABLE = {
     tokenLock: "0x78787661C6B2D4bdd447456e47304F9E092D8678",
     multisend: "0x7878D62c54e6C7a073E6114F478774277F595878",
     dropFactory: "0x7878D474C2797c4C07ef06F848487fEE6aDbCA78",
+    rangeOrders: "0x787888B35e67DC155E612c862c6A2f60f512D378",
+    dca: "0x7878947dC3a69d03C3d9431d9bDC536d1e0A0878",
+    lpRewardsHook: "0x7878081C835d9069FacDb861563cf3cA8A7c2678",
+    oracleHook: "0x7878cB78E32d815e515E3d7b98463E8aFc996178",
+    dexHook: "0x7878D43C5065F82608cdE151B46946A0a6B7E778",
+    tunerGate: "0x7878e7c192967621aaece271A41F050a337C6578",
+    vaultFactory: "0x787889b36FEc39564Dda016572D68d641e455778",
     rwa: {
       marketHoursHook: null,
       stockPairHook: null,
       chainlinkPriceBandAdapter: null,
       allowlistComplianceOracle: null,
+      chainlinkCrossPriceBandAdapter: null,
     },
     durationClocks: { revShareHook: "timestamp", launchpadKit: null, launchGuardHook: null },
     revShareHooks: [
@@ -857,8 +957,8 @@ const DEPLOYMENTS_TABLE = {
     ],
   },
 
-  /* Written from on-chain reads: every address holds code on this chain, and every contract not
-     deployed here is `null`. */
+  /* Written by ops/deploy/tools/make-record.mjs from the runner's state file and on-chain reads: every address
+     holds code on this chain, and every contract not deployed here is `null`. */
   8453: {
     chainId: 8453,
     key: "base",
@@ -915,11 +1015,19 @@ const DEPLOYMENTS_TABLE = {
     tokenLock: "0x78787661C6B2D4bdd447456e47304F9E092D8678",
     multisend: "0x7878D62c54e6C7a073E6114F478774277F595878",
     dropFactory: "0x7878D474C2797c4C07ef06F848487fEE6aDbCA78",
+    rangeOrders: "0x787888B35e67DC155E612c862c6A2f60f512D378",
+    dca: "0x7878947dC3a69d03C3d9431d9bDC536d1e0A0878",
+    lpRewardsHook: "0x7878081C835d9069FacDb861563cf3cA8A7c2678",
+    oracleHook: "0x7878cB78E32d815e515E3d7b98463E8aFc996178",
+    dexHook: "0x7878D43C5065F82608cdE151B46946A0a6B7E778",
+    tunerGate: "0x7878e7c192967621aaece271A41F050a337C6578",
+    vaultFactory: "0x787889b36FEc39564Dda016572D68d641e455778",
     rwa: {
       marketHoursHook: null,
       stockPairHook: null,
       chainlinkPriceBandAdapter: null,
       allowlistComplianceOracle: null,
+      chainlinkCrossPriceBandAdapter: null,
     },
     durationClocks: { revShareHook: "timestamp", launchpadKit: null, launchGuardHook: null },
     revShareHooks: [
@@ -1017,7 +1125,7 @@ export type RedeployableContract = (typeof REDEPLOYABLE_CONTRACTS)[number];
 
 /** Keys of `DeepCoreDeployment` that hold a single contract address. */
 export type ContractKey = {
-  [K in keyof DeepCoreDeployment]: DeepCoreDeployment[K] extends Address | null ? K : never;
+  [K in keyof DeepCoreDeployment]-?: DeepCoreDeployment[K] extends Address | null | undefined ? K : never;
 }[keyof DeepCoreDeployment];
 
 /**
@@ -1065,7 +1173,7 @@ export function requireDeployment(chainId: number): DeepCoreDeployment {
  * <chain name> (<chain id>)", which is the sentence the caller needed.
  */
 export function requireContract(deployment: DeepCoreDeployment, key: ContractKey): Address {
-  const value = deployment[key] as Address | null;
+  const value = (deployment[key] ?? null) as Address | null;
   if (value === null) {
     throw new Error(
       `${key} is not deployed on ${deployment.name} (${deployment.chainId}). ` +

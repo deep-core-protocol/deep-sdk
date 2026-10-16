@@ -67,6 +67,14 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  FUTURE_SKEW_SECONDS,
+  HEAD_WALL_TOLERANCE_SECONDS,
+  STALE_GRACE_SECONDS,
+  headClockFault,
+  judgeRoundFreshness,
+} from "./lib/feedFreshness.mjs";
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, "..");
 const CACHE_DIR = join(HERE, ".cache", "chainlink");
@@ -106,6 +114,9 @@ const CHAINS = {
     rpcs: ["https://rpc.mainnet.arc.io", "https://5042.rpc.thirdweb.com"],
   },
   sepolia: { chainId: 11155111, file: "feeds-ethereum-testnet-sepolia", rpcKey: "sepolia", testnet: true },
+  // Base Sepolia (84532): DeepCore's testnet from 2026-10-15. The directory document is
+  // `feeds-ethereum-testnet-sepolia-base-1` (HTTP 200 on 2026-10-15; the three guessable names 404).
+  baseSepolia: { chainId: 84532, file: "feeds-ethereum-testnet-sepolia-base-1", rpcKey: "baseSepolia", testnet: true },
   // Monad Testnet (10143) was REMOVED 2026-09-24 by owner decision; its `rpcKey` no longer exists in
   // `CHAIN_RPCS`. Monad MAINNET (143) stays above.
   stableTestnet: { chainId: 2201, file: "feeds-stable-testnet", rpcKey: "stableTestnet", testnet: true },
@@ -157,6 +168,10 @@ const CURATED_NOTES = {
     "Sepolia's Chainlink ETH/USD feed prices REAL ether, not Sepolia ether, which has no " +
     "market price at all. The feed is recorded because it exists and was verified; the " +
     "resolver refuses to spend it on a USD figure for a testnet unless a caller opts in.",
+  84532:
+    "Base Sepolia's Chainlink ETH/USD feed prices REAL ether, not Base Sepolia ether, which has " +
+    "no market price at all. Recorded because it exists and was verified; the resolver refuses to " +
+    "spend it on a USD figure for a testnet unless a caller opts in (same rule as Sepolia).",
   5042002: "Arc Testnet publishes no Chainlink directory document (HTTP 404 on 2026-09-20).",
 };
 
@@ -175,8 +190,28 @@ const CURATED_NOTES = {
  */
 const HERMES_BASE = "https://hermes.pyth.network";
 
-/** Clock skew tolerated on `updatedAt` before it is called a future timestamp. */
-const FUTURE_SKEW_SECONDS = 120;
+/* ---------------------------------------------------------------------------
+   THE REFERENCE CLOCK IS THE CHAIN'S OWN HEAD, READ BESIDE THE ROUND — NOT THE
+   WALL CLOCK AT PROCESS START. Found 2026-10-15.
+   ---------------------------------------------------------------------------
+   This generator used to capture `nowSeconds` once, before the chain loop, and judge
+   every chain's `updatedAt` against it. The loop takes minutes (fourteen chains, two
+   Hermes calls and three to five RPC reads each), so a round published 131 s into the
+   run read as "131 s in the future" on whichever chain the loop reached late enough —
+   Monad, ninth in the table — and two consecutive runs rejected a DIFFERENT MON/USD
+   aggregator each. The same stale instant also UNDER-reported every age by the elapsed
+   run time, which is the one direction a staleness check must not err in.
+
+   Now each round is judged against the timestamp of the chain's latest block, fetched
+   from the same endpoint immediately after `latestRoundData()`, with the wall clock at
+   that read recorded beside it — and a head that disagrees with the wall clock by more
+   than `HEAD_WALL_TOLERANCE_SECONDS` is refused as a clock and the next endpoint tried,
+   because the second run of the day found a load-balanced HyperEVM endpoint serving a
+   head an hour behind. The rule itself (`FUTURE_SKEW_SECONDS`, `STALE_GRACE_SECONDS`,
+   `HEAD_WALL_TOLERANCE_SECONDS`, `judgeRoundFreshness`, `headClockFault`) lives in
+   `scripts/lib/feedFreshness.mjs` with the 2026-10-15 measurement that showed the
+   aggregators ahead of nothing, and is unit-tested in `test/feedFreshness.test.ts`.
+   --------------------------------------------------------------------------- */
 
 /* ---------------------------------------------------------------------------
    FRESHNESS IS A REJECTION HERE, UNLIKE THE EQUITY FEEDS — AND THE DIFFERENCE
@@ -193,20 +228,10 @@ const FUTURE_SKEW_SECONDS = 120;
    exists and was not publishing when we looked".
    --------------------------------------------------------------------------- */
 
-/**
- * Grace added to a feed's own heartbeat before its answer is called stale, in seconds.
- *
- * `updatedAt` is the timestamp of the block that INCLUDED the update, not of the
- * observation, so a feed that publishes exactly on its heartbeat can still read a little
- * over it through ordinary block-time jitter and sequencer timestamp latitude. Five minutes
- * absorbs that on every chain here and is negligible against the 3,600 s and 86,400 s
- * heartbeats; on BNB's 27 s heartbeat the grace dominates, which is correct — one missed
- * 27-second beat is noise, not a fault.
- *
- * The same constant is exported to the runtime resolver, so the table and the reader agree
- * by construction rather than by two people remembering the same number.
- */
-const STALE_GRACE_SECONDS = 300;
+// `STALE_GRACE_SECONDS` and `FUTURE_SKEW_SECONDS` are imported from
+// `scripts/lib/feedFreshness.mjs` (their rationale is there) and both are EXPORTED into
+// the generated file, so the table and the runtime reader agree by construction rather
+// than by two people remembering the same numbers.
 
 /* ---------------------------------------------------------------- arguments */
 
@@ -317,10 +342,16 @@ async function withFallback(clients, fn) {
  *   description — must name the base asset. A record that says ETH/USD pointing at an
  *                 aggregator describing itself as something else is the one error nobody
  *                 downstream can catch
- *   answer      — positive, complete round, not in the future
- *   age         — within heartbeat + grace. Crypto feeds are 24/7; see the note above
+ *   answer      — positive, complete round, not past the chain head it was read beside
+ *                 by more than FUTURE_SKEW_SECONDS
+ *   age         — within heartbeat + grace, measured against that same head. Crypto
+ *                 feeds are 24/7; see the note above
+ *
+ * The round and the head are read in ONE fallback step so they come from the same
+ * endpoint, head second: the head can then only be at or past the block the `eth_call`
+ * was served at, so a legitimate round reads "ahead" by at most node-to-node skew.
  */
-async function verifyAggregator(clients, address, entry, base, nowSeconds) {
+async function verifyAggregator(clients, address, entry, base) {
   const out = { address, ok: false, reasons: [] };
   let code;
   try {
@@ -335,7 +366,7 @@ async function verifyAggregator(clients, address, entry, base, nowSeconds) {
   }
   out.codeSize = (code.length - 2) / 2;
 
-  for (const fn of ["decimals", "description", "latestRoundData"]) {
+  for (const fn of ["decimals", "description"]) {
     try {
       const { value } = await withFallback(clients, (c) =>
         c.readContract({ address, abi: AGGREGATOR_ABI, functionName: fn }),
@@ -345,15 +376,39 @@ async function verifyAggregator(clients, address, entry, base, nowSeconds) {
       out.reasons.push(`${fn}() failed: ${errText(e)}`);
     }
   }
+  // The round and the head it is judged against, from the same endpoint, head second.
+  let round;
+  try {
+    const { value } = await withFallback(clients, async (c) => {
+      const data = await c.readContract({ address, abi: AGGREGATOR_ABI, functionName: "latestRoundData" });
+      const head = await c.getBlock({ blockTag: "latest" });
+      const wallSeconds = Math.floor(Date.now() / 1000);
+      // A head that disagrees with the wall clock by more than HEAD_WALL_TOLERANCE_SECONDS
+      // is a stale or skewed backend behind a load balancer, not the chain (seen on
+      // HyperEVM 2026-10-15: an hour behind, seconds after a current answer). Throwing
+      // here makes `withFallback` try the next endpoint instead of judging a round
+      // against a clock that is not one.
+      const fault = headClockFault(Number(head.timestamp), wallSeconds);
+      if (fault) throw new Error(`${fault} [head block ${head.number}]`);
+      return { data, head, wallSeconds };
+    });
+    round = value;
+  } catch (e) {
+    out.reasons.push(`latestRoundData()/head read failed on every endpoint: ${errText(e)}`);
+  }
   if (out.reasons.length) return out;
 
   out.decimals = Number(out.decimals);
-  const [roundId, answer, startedAt, updatedAt] = out.latestRoundData;
+  const [roundId, answer, startedAt, updatedAt] = round.data;
   out.roundId = roundId.toString();
   out.answer = answer.toString();
   out.updatedAt = Number(updatedAt);
-  out.ageSeconds = nowSeconds - out.updatedAt;
-  delete out.latestRoundData;
+  out.headBlock = Number(round.head.number);
+  out.headTimestamp = Number(round.head.timestamp);
+  // Chain head minus wall clock at the same read: how far this chain's block clock sits
+  // from real time. Recorded because "block timestamps lag wall time" is a claim made
+  // about several of these chains, and this is where it would show.
+  out.headWallOffsetSeconds = out.headTimestamp - round.wallSeconds;
 
   if (out.decimals !== Number(entry.decimals)) {
     out.reasons.push(`decimals ${out.decimals} on chain, directory says ${entry.decimals}`);
@@ -368,17 +423,16 @@ async function verifyAggregator(clients, address, entry, base, nowSeconds) {
   if (answer <= 0n) out.reasons.push(`non-positive answer ${answer}`);
   if (roundId === 0n) out.reasons.push("round id 0");
   if (startedAt === 0n || updatedAt === 0n) out.reasons.push("incomplete round (startedAt or updatedAt is 0)");
-  if (out.updatedAt > nowSeconds + FUTURE_SKEW_SECONDS) {
-    out.reasons.push(`updatedAt ${out.updatedAt} is in the future (now ${nowSeconds})`);
-  }
-  const heartbeat = Number(entry.heartbeat ?? 0);
-  if (!heartbeat) out.reasons.push("directory gives no heartbeat");
-  else if (out.ageSeconds > heartbeat + STALE_GRACE_SECONDS) {
-    out.reasons.push(
-      `stale: last round ${out.ageSeconds}s ago, heartbeat ${heartbeat}s (+${STALE_GRACE_SECONDS}s grace). ` +
-        `This is a 24/7 crypto feed, so age past the heartbeat is a fault, not a closed market.`,
-    );
-  }
+  // Future and stale, both against the head read beside the round. The rule and its
+  // numbers are in scripts/lib/feedFreshness.mjs and unit-tested there.
+  const fresh = judgeRoundFreshness({
+    updatedAt: out.updatedAt,
+    referenceTimestamp: out.headTimestamp,
+    heartbeatSeconds: Number(entry.heartbeat ?? 0),
+  });
+  out.ageSeconds = fresh.ageSeconds;
+  out.aheadSeconds = fresh.aheadSeconds;
+  for (const r of fresh.reasons) out.reasons.push(`${r} [head block ${out.headBlock}]`);
 
   out.ok = out.reasons.length === 0;
   return out;
@@ -403,8 +457,12 @@ async function verifyAggregator(clients, address, entry, base, nowSeconds) {
  * supplies, because no Pyth contract address has been verified by this run and an
  * unverified address is exactly what the rules here forbid.
  */
-async function verifyPyth(symbol, nowSeconds) {
+async function verifyPyth(symbol) {
   const out = { ok: false, reasons: [], symbol };
+  // Hermes is an HTTP service with no block clock, so the wall clock AT THIS READ is the
+  // only reference there is — never the instant the process started (see the note above
+  // `verifyAggregator`).
+  const nowSeconds = Math.floor(Date.now() / 1000);
   let list;
   try {
     const res = await fetch(`${HERMES_BASE}/v2/price_feeds?query=${encodeURIComponent(symbol)}&asset_type=crypto`);
@@ -538,7 +596,7 @@ for (const key of CHAIN_KEYS) {
   // Probed on EVERY chain, not only the ones Chainlink misses, so the table records what
   // the fallback would have said. Costs two HTTP calls and makes a future Chainlink
   // outage a data question rather than a research question.
-  const pyth = await verifyPyth(row.native.symbol, nowSeconds);
+  const pyth = await verifyPyth(row.native.symbol);
   row.pyth = pyth.ok
     ? {
         priceFeedId: pyth.priceFeedId,
@@ -660,7 +718,7 @@ for (const key of CHAIN_KEYS) {
       thresholdPercent: entry.threshold ?? null,
       contractVersion: Number(entry.contractVersion ?? 0) || null,
     };
-    const v = await verifyAggregator(clients, proxy, entry, base, nowSeconds);
+    const v = await verifyAggregator(clients, proxy, entry, base);
     if (!v.ok) {
       row.rejected.push({ ...shared, reason: v.reasons.join("; ") });
       console.error(`  REJECT ${key} ${base.padEnd(6)} ${proxy} — ${v.reasons.join("; ")}`);
@@ -673,7 +731,10 @@ for (const key of CHAIN_KEYS) {
       verifiedRoundId: v.roundId,
       verifiedAnswer: v.answer,
       verifiedUpdatedAt: v.updatedAt,
+      verifiedHeadBlock: v.headBlock,
+      verifiedHeadTimestamp: v.headTimestamp,
       verifiedAgeSeconds: v.ageSeconds,
+      verifiedHeadWallOffsetSeconds: v.headWallOffsetSeconds,
       verifiedEndpoint: v.endpoint,
     });
   }
@@ -695,7 +756,8 @@ for (const key of CHAIN_KEYS) {
   console.error(
     `${key.padEnd(14)} ${String(chainId).padEnd(9)} ${base.padEnd(6)} ${row.selected.proxyAddress} ` +
       `${row.selected.variant.padEnd(9)} dec=${row.selected.decimals} hb=${row.selected.heartbeat} ` +
-      `age=${row.selected.verifiedAgeSeconds}s  alt=${row.alternatives.length} rej=${row.rejected.length}`,
+      `age=${row.selected.verifiedAgeSeconds}s head-wall=${row.selected.verifiedHeadWallOffsetSeconds}s  ` +
+      `alt=${row.alternatives.length} rej=${row.rejected.length}`,
   );
 }
 
@@ -725,7 +787,10 @@ function emitChainlink(f, indent) {
     `${i}  verifiedRoundId: ${q(f.verifiedRoundId)},`,
     `${i}  verifiedAnswer: ${q(f.verifiedAnswer)},`,
     `${i}  verifiedUpdatedAt: ${f.verifiedUpdatedAt},`,
+    `${i}  verifiedHeadBlock: ${f.verifiedHeadBlock},`,
+    `${i}  verifiedHeadTimestamp: ${f.verifiedHeadTimestamp},`,
     `${i}  verifiedAgeSeconds: ${f.verifiedAgeSeconds},`,
+    `${i}  verifiedHeadWallOffsetSeconds: ${f.verifiedHeadWallOffsetSeconds},`,
     `${i}},`,
   ].join("\n");
 }
@@ -799,9 +864,14 @@ const header = `// SPDX-License-Identifier: MIT
    HOW EVERY CHAINLINK ROW WAS ESTABLISHED. Chainlink's reference-data directory said
    which address to go and look at. Then the address itself was read: it has code,
    \`decimals()\` agrees with the directory, \`description()\` names the base asset on a
-   word boundary, and \`latestRoundData()\` returned a positive, complete, non-future
-   round inside its own heartbeat plus {@link STALE_GRACE_SECONDS}. A candidate that
-   failed any of those is in \`chainlinkRejections\` with the reason, NOT in \`chainlink\`.
+   word boundary, and \`latestRoundData()\` returned a positive, complete round that
+   was judged AGAINST THE CHAIN'S OWN HEAD, read from the same endpoint right after
+   it: at most {@link FUTURE_SKEW_SECONDS} past that head's timestamp, and no older
+   than its own heartbeat plus {@link STALE_GRACE_SECONDS} before it. Every row
+   records that head (\`verifiedHeadBlock\`, \`verifiedHeadTimestamp\`) and how far the
+   head sat from the wall clock at the read (\`verifiedHeadWallOffsetSeconds\`), so the
+   verdict can be re-derived from the row alone. A candidate that failed any of those
+   is in \`chainlinkRejections\` with the reason, NOT in \`chainlink\`.
    The directory is trusted for which addresses to look at and for the heartbeat and
    deviation threshold, which have no on-chain counterpart. It is trusted for nothing
    else.
@@ -903,8 +973,25 @@ export interface ChainlinkNativeFeed {
   readonly verifiedAnswer: string;
   /** \`latestRoundData().updatedAt\` at verification, unix seconds. */
   readonly verifiedUpdatedAt: number;
-  /** How old that round was when it was read. Always within \`heartbeat\` + grace, or the row would not exist. */
+  /** The chain's latest block when the round was read, from the same endpoint, read right after it. */
+  readonly verifiedHeadBlock: number;
+  /** That block's timestamp: the reference clock the round was judged against. */
+  readonly verifiedHeadTimestamp: number;
+  /**
+   * \`verifiedHeadTimestamp − verifiedUpdatedAt\`: how old the round was IN CHAIN TIME when
+   * it was read. Always within \`heartbeat\` + grace, or the row would not exist; never
+   * below \`−FUTURE_SKEW_SECONDS\`, or the row would not exist either. A negative value is
+   * a round the endpoint served from a node past the one that served the head.
+   */
   readonly verifiedAgeSeconds: number;
+  /**
+   * \`verifiedHeadTimestamp − wall clock\` at the read: how far this chain's block clock
+   * sat from real time. Always within ±${HEAD_WALL_TOLERANCE_SECONDS} s, because a head
+   * further from the wall clock than that is refused as a reference and the next endpoint
+   * is read instead (a load-balanced HyperEVM endpoint served a head an hour behind on
+   * 2026-10-15). Measured 0 to −1 s on sub-2 s chains, −4 to −10 s on 12 s-slot chains.
+   */
+  readonly verifiedHeadWallOffsetSeconds: number;
 }
 
 /**
@@ -1012,6 +1099,21 @@ const body = [
   ` * the committed table and the runtime reader cannot drift apart.`,
   ` */`,
   `export const STALE_GRACE_SECONDS = ${STALE_GRACE_SECONDS};`,
+  ``,
+  `/**`,
+  ` * Seconds a round's \`updatedAt\` may sit PAST the clock it is judged against before it is`,
+  ` * called a future timestamp — the chain's head when the generator verifies a row, the`,
+  ` * caller's wall clock when the runtime reader checks one.`,
+  ` *`,
+  ` * Measured on 2026-10-15 (Monad and Base, three reads a minute apart, head and round read`,
+  ` * in the same instant): every aggregator was BEHIND its chain's head, never ahead, and the`,
+  ` * head tracked wall time within ±1 s. The allowance covers a load-balanced endpoint serving`,
+  ` * the round from a node past the one that served the head, and sequencer timestamp`,
+  ` * latitude; it is not a widening. A feed more than this past the head is lying about time.`,
+  ` *`,
+  ` * The generator applies exactly this constant, so the table and the reader agree.`,
+  ` */`,
+  `export const FUTURE_SKEW_SECONDS = ${FUTURE_SKEW_SECONDS};`,
   ``,
   `/** Every chain that was surveyed, whether or not a source was found. */`,
   `export const NATIVE_FEEDS: Readonly<Record<number, NativeFeedRecord>> = {`,

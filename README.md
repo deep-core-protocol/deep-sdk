@@ -17,7 +17,7 @@ TypeScript SDK for **DeepCore Protocol**: a hooks platform on its own Infinity-a
 
 **Live on HyperEVM · BNB Chain · Robinhood Chain · Base, at the same contract addresses on every
 chain.** Every address ships in this package's address book, written from on-chain read-back.
-MIT. Publication to npm is coming soon; until then, [install from git](#install).
+MIT. On npm as `@deepcoreprotocol/sdk` ([install](#install)).
 
 ## Features
 
@@ -25,8 +25,8 @@ DeepCore is one shared liquidity core (a single Vault with concentrated-liquidit
 managers) that Launchpads and DEXes build on instead of deploying their own AMM. The SDK is the
 typed way in:
 
-- **Four chains, one address book.** `DEEPCORE_CHAIN_IDS` is `[999, 56, 4663, 8453]` (HyperEVM, BNB
-  Chain, Robinhood Chain, Base); `getDeployment(id)` returns every contract on that chain, `null`
+- **Four chains, one address book.** `DEEPCORE_CHAIN_IDS` is `[56, 999, 4663, 8453]` (BNB Chain, HyperEVM,
+  Robinhood Chain, Base); `getDeployment(id)` returns every contract on that chain, `null`
   where one is not shipped, and the block to start log scans from.
 - **Cross-chain reads.** A Launchpad or DEX sits at the same address on every chain;
   `readPadAcrossChains` asks each chain about it and tells "not there" apart from "could not read".
@@ -65,6 +65,16 @@ It also carries the modules the rest of the product is built from, and they are 
 | `registry/`, `trust/` | What the on-chain registry says about a DeepCore, and how to render it without ever implying it is an audit |
 | `tokenlists/` | The DeepCore token list in the standard schema, merged and verified |
 | `chains/` | Probed public endpoints per chain, a failover transport, and the contract-clock reader — because on some chains `block.number` inside the EVM is not the block number the RPC reports |
+| `router/` | Typed client for the routing API, and `verifySwapCalldata`, which decodes the calldata the API returns and refuses anything but the swap you asked for. Check every router transaction with it before it is signed |
+
+| `orders/` | Limit orders (`DeepCoreRangeOrders`) and DCA plans (`DeepCoreDCA`): build, read and cancel |
+| `vaults/` | Managed vaults (`DeepCoreVaultFactory` and its vaults): create, deposit, withdraw, read |
+| `rewards/` | Liquidity rewards (`DeepCoreLiquidityRewardsHook`): fund a stream, read and claim earnings |
+| `stocks/` | Tokenized stocks: the market session, and each token's on-chain price beside its market price |
+
+The address book carries `rangeOrders`, `dca`, `vaultFactory`, `lpRewardsHook`, `oracleHook`, `dexHook`
+and `tunerGate` on every chain where those contracts are deployed and read back (HyperEVM, Robinhood
+Chain and Base today), and `null` where they are not yet. Never assume an address is there: check it.
 
 ---
 
@@ -273,15 +283,11 @@ check in code, because a sentence in a README goes stale the day something ships
 ## Install
 
 ```bash
-# On npm soon as @deepcoreprotocol/sdk. Until then, install from git:
-npm install github:deep-core-protocol/deep-sdk
+npm install @deepcoreprotocol/sdk viem
 ```
 
-The git install builds itself via `prepare`, so you get a compiled `dist/`.
-(It did not, until 2026-09-13: this package had `prepublishOnly` and no
-`prepare`, and npm only runs the former on `npm publish` — so a git install
-produced a package with neither a build nor sources. Reported by an integrator,
-fixed, and verified by installing from a clean directory.)
+The source mirror installs too (`npm install github:deep-core-protocol/deep-sdk`); it builds itself
+through `prepare`.
 
 `viem` is the only runtime dependency (used for `Address`/`Hex` types, ABI encoding and `keccak256`).
 
@@ -306,7 +312,7 @@ if (deepcore) {
   deepcore.deployedAtBlock;                    // start log scans here, not at genesis
 }
 
-for (const id of DEEPCORE_CHAIN_IDS) {         // 999, 56, 4663, 8453
+for (const id of DEEPCORE_CHAIN_IDS) {         // 56, 999, 4663, 8453
   const d = getDeployment(id)!;
   console.log(d.name, d.vault, explorerAddressUrl(id, d.vault));
 }
@@ -644,7 +650,7 @@ The bitmap offsets, the `parameters` layout and the dependency rules were read f
 |---|---|
 | Website | <https://deepcore.fun> |
 | Docs | <https://docs.deepcore.fun> |
-| Package | `@deepcoreprotocol/sdk` on npm (soon) |
+| Package | <https://www.npmjs.com/package/@deepcoreprotocol/sdk> |
 | Source | <https://github.com/deep-core-protocol/deep-sdk> |
 | Contracts | <https://github.com/deep-core-protocol/contracts> |
 | Org | <https://github.com/deep-core-protocol> |

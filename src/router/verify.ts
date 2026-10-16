@@ -38,7 +38,7 @@
  *
  * Anything it cannot decode is refused: unknown bytes are not "probably fine".
  */
-import { decodeAbiParameters, decodeFunctionData, getAbiItem, hexToBytes, isAddressEqual, toFunctionSelector, type Address, type Hex } from "viem";
+import { decodeAbiParameters, decodeFunctionData, encodeFunctionData, getAbiItem, hexToBytes, isAddressEqual, toFunctionSelector, type Address, type Hex } from "viem";
 
 export const NATIVE_SENTINEL: Address = "0x0000000000000000000000000000000000000000";
 const MSG_SENDER: Address = "0x0000000000000000000000000000000000000001";
@@ -161,6 +161,42 @@ const refuse = (reason: string): never => {
 const EXECUTE_SELECTOR = toFunctionSelector(getAbiItem({ abi: EXECUTE_ABI, name: "execute" })).toLowerCase();
 const FILL_SELECTOR = toFunctionSelector(getAbiItem({ abi: FILL_ABI, name: "fill" })).toLowerCase();
 
+/** The ERC-8021 marker that ends every attribution suffix (16 bytes, `0x8021` eight times). */
+export const ERC8021_MARKER = "80218021802180218021802180218021";
+
+/**
+ * True when `tail` (hex, with or without `0x`) is EXACTLY one ERC-8021 schema-0 attribution suffix
+ * (Base Builder Codes): `codes ∥ codesLength (1 byte) ∥ schemaId 0x00 ∥ marker`, the codes printable
+ * code characters joined by commas, and nothing before them. Any other trailing bytes are not one.
+ */
+export function isErc8021Suffix(tail: string): boolean {
+  const h = tail.replace(/^0x/i, "").toLowerCase();
+  if (h.length % 2 !== 0 || !/^[0-9a-f]*$/.test(h)) return false;
+  const n = h.length / 2;
+  if (n < 19 || !h.endsWith(ERC8021_MARKER)) return false;
+  const byteAt = (i: number) => parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  if (byteAt(n - 17) !== 0) return false; // schema 0 (canonical registry)
+  const len = byteAt(n - 18);
+  if (len === 0 || n !== len + 18) return false;
+  let codes = "";
+  for (let i = 0; i < len; i++) codes += String.fromCharCode(byteAt(i));
+  return /^[A-Za-z0-9_-]+(,[A-Za-z0-9_-]+)*$/.test(codes);
+}
+
+/**
+ * The calldata past the canonical encoding of what was decoded must be empty, or exactly one ERC-8021
+ * attribution suffix: a wallet or the Base App may append a Builder Code after the call, and the
+ * router ignores trailing bytes. Anything else appended is refused, so the decoded call is the whole
+ * of what is signed.
+ */
+function refuseUnknownTail(data: Hex, canonical: Hex, what: string): void {
+  const d = data.toLowerCase();
+  const c = canonical.toLowerCase();
+  if (!d.startsWith(c)) return refuse(`${what} calldata is not in its canonical encoding`);
+  const tail = d.slice(c.length);
+  if (tail !== "" && !isErc8021Suffix(tail)) refuse(`${what} calldata carries ${tail.length / 2} unexplained trailing bytes`);
+}
+
 /** Which DeepCore router a swap's calldata is for, by selector; `null` for anything else. */
 export function swapKindFromCalldata(data: Hex): "universal-router" | "fill-router" | null {
   const sel = data.slice(0, 10).toLowerCase();
@@ -211,6 +247,7 @@ function verifyFill(data: Hex, req: SwapRequestFacts, nativeIn: boolean): void {
   } catch {
     return refuse("calldata is not DeepCoreFillRouter.fill");
   }
+  refuseUnknownTail(data, encodeFunctionData({ abi: FILL_ABI, functionName: "fill", args: [p] }), "fill");
   const nativeOut = same(req.tokenOut, NATIVE_SENTINEL);
   if (!same(p.currencyIn, req.tokenIn) || !same(p.currencyOut, req.tokenOut)) refuse("fill trades another pair");
   if (p.wrapInput !== nativeIn || p.unwrapOutput !== nativeOut) refuse("fill wrap/unwrap flags do not match the pair");
@@ -228,6 +265,7 @@ function verifyExecute(data: Hex, req: SwapRequestFacts, router: Address): void 
   } catch {
     return refuse("calldata is not UniversalRouter.execute");
   }
+  refuseUnknownTail(data, encodeFunctionData({ abi: EXECUTE_ABI, functionName: "execute", args }), "execute");
   const [commands, inputs, deadline] = args;
   if (Number(deadline) !== req.deadline) refuse("execute deadline differs from the one shown");
   const bytes = hexToBytes(commands);

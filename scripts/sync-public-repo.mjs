@@ -55,6 +55,7 @@ import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const SDK = join(dirname(fileURLToPath(import.meta.url)), '..')
+const { UNRELEASED_MODULES, stripIndex, stripManifest } = await import(new URL('./lib/unreleased.mjs', import.meta.url).href)
 
 const args = process.argv.slice(2)
 const DRY = args.includes('--dry-run')
@@ -68,14 +69,14 @@ const DEST =
  *  `assets/` (gitignored) does NOT travel: it holds the previous identity's art. The README's
  *  banner is the mirror's own `.github/assets/og-image-1200x630.png`, which this script never
  *  touches.
- *  `prompts` (the paste-into-an-agent integration prompts) is HELD BACK: they still describe the
- *  first, block-denominated launch kit, and a public prompt that teaches an agent the wrong kit
- *  is worse than none. Add it back here once they are rewritten for Kit v2. */
-const INCLUDE_DIRS = ['src', 'scripts']
+ *  `prompts` (the paste-into-an-agent integration prompts) travel since 0.2.0, rewritten for
+ *  `LaunchpadKitV2` (they were held back while they described the first, block-denominated kit). */
+const INCLUDE_DIRS = ['src', 'scripts', 'prompts']
 const INCLUDE_FILES = [
   'package.json',
   'package-lock.json',
   'README.md',
+  'CHANGELOG.md',
   'LICENSE',
   'schema.graphql',
   'tsconfig.json',
@@ -102,6 +103,9 @@ for (const d of INCLUDE_DIRS) {
   const p = join(SDK, d)
   if (existsSync(p)) files.push(...walk(p))
 }
+/* Modules whose contracts are not deployed yet stay in the monorepo (scripts/lib/unreleased.mjs). */
+const unreleased = new RegExp(`^src[/\\\\](?:${UNRELEASED_MODULES.join('|')})[/\\\\]`)
+if (UNRELEASED_MODULES.length > 0) for (let i = files.length - 1; i >= 0; i--) if (unreleased.test(relative(SDK, files[i]))) files.splice(i, 1)
 for (const f of INCLUDE_FILES) {
   const p = join(SDK, f)
   if (existsSync(p)) files.push(p)
@@ -157,8 +161,10 @@ for (const f of files) {
    — the Solidity — exists. Rewriting the scripts here rather than editing the
    real package.json keeps that asymmetry in one place. */
 if (!DRY) {
+  const indexPath = join(DEST, 'src', 'index.ts')
+  writeFileSync(indexPath, stripIndex(readFileSync(indexPath, 'utf8'), 'src/index.ts'))
   const pkgPath = join(DEST, 'package.json')
-  const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
+  const pkg = stripManifest(JSON.parse(readFileSync(pkgPath, 'utf8')))
   for (const k of Object.keys(pkg.scripts)) {
     if (k === 'generate' || k.startsWith('generate:')) delete pkg.scripts[k]
   }

@@ -65,8 +65,16 @@ export const CHAINLINK_AGGREGATOR_ABI = [
   },
 ] as const;
 
-/** Clock skew tolerated before `updatedAt` is called a future timestamp. */
-export const FUTURE_SKEW_SECONDS = 120;
+/**
+ * Clock skew tolerated before `updatedAt` is called a future timestamp.
+ *
+ * The generator's constant, re-exported, so the committed table and this reader apply
+ * one number (the same arrangement as `STALE_GRACE_SECONDS`). Here the reference is the
+ * caller's wall clock at the read; the generator's is the chain's head read beside the
+ * round. Both were measured within ±1 s of each other on 2026-10-15.
+ */
+export { FUTURE_SKEW_SECONDS } from "../deployments/nativeFeeds.js";
+import { FUTURE_SKEW_SECONDS } from "../deployments/nativeFeeds.js";
 
 export interface ReadChainlinkNativeUsdOptions {
   readonly client: PublicClient;
