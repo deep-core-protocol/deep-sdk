@@ -61,6 +61,13 @@ export const PREMIUM_FUTURE_SKEW_SECONDS = 120;
 export const DEFAULT_PREMIUM_PROBE_USD = 100;
 /** Above this buy/sell spread the mid is not a price anyone can trade at: not comparable. 10%. */
 export const PREMIUM_MAX_SPREAD_BPS = 1_000;
+/** The depth probe is this many times the probe size. */
+export const PREMIUM_DEPTH_MULTIPLE = 5;
+/**
+ * Above this move between the probe-size price and the depth-size price (either side) the pool is
+ * too thin for its price to mean anything: a reading is refused rather than reported. 5%.
+ */
+export const PREMIUM_MAX_DEPTH_MOVE_BPS = 500;
 /** An on-chain price older than this is not compared. */
 export const PREMIUM_MAX_ONCHAIN_AGE_SECONDS = 900;
 /**
@@ -150,7 +157,8 @@ export type PremiumReason =
   | "no-onchain-price"
   | "onchain-stale"
   | "onchain-one-sided"
-  | "onchain-spread-too-wide";
+  | "onchain-spread-too-wide"
+  | "onchain-too-thin";
 
 /** One sentence per reason, for a reader who is not us. */
 export const PREMIUM_REASON_TEXT: Readonly<Record<PremiumReason, string>> = {
@@ -168,6 +176,7 @@ export const PREMIUM_REASON_TEXT: Readonly<Record<PremiumReason, string>> = {
   "onchain-stale": "the on-chain price is out of date",
   "onchain-one-sided": "only one side of the on-chain market could be quoted",
   "onchain-spread-too-wide": "the on-chain buy and sell prices are too far apart to call one price",
+  "onchain-too-thin": "too thin to price: a larger trade moves the on-chain price too far",
 };
 
 /** `latestRoundData()` plus `decimals()`, as read. */
@@ -505,6 +514,19 @@ export interface OnchainPrice {
   /** (buy - sell) / mid in bps, when both sides quoted. */
   readonly spreadBps: number | null;
   readonly probeUsd: number;
+  /**
+   * The depth check: the same buy and sell at `depth.multiple` times the probe size, and the larger
+   * of the two price moves against the probe-size prices, in bps (always >= 0). `moveBps` null with a
+   * `reason` when a depth quote failed; `depth` null when no depth check was asked for (or no
+   * executable mid exists to check).
+   */
+  readonly depth: {
+    readonly multiple: number;
+    readonly buyUsd: number | null;
+    readonly sellUsd: number | null;
+    readonly moveBps: number | null;
+    readonly reason: string | null;
+  } | null;
   readonly venue: string | null;
   readonly blockNumber: string | null;
   readonly via: PremiumUsdLeg | null;
@@ -544,6 +566,11 @@ export interface OnchainPriceArgs {
   /** The stable leg; read with `readPremiumUsdLeg`. An Error is carried into the reason. */
   readonly leg?: PremiumUsdLeg | Error;
   readonly probeUsd?: number;
+  /**
+   * Quote a buy and a sell this many times the probe size as well, so `premium` can refuse a thin
+   * pool. Default `PREMIUM_DEPTH_MULTIPLE`; 0 or 1 skips the depth check (two quotes fewer).
+   */
+  readonly depthMultiple?: number;
   /** DeepCore pools of the token against the leg's stable, for a spot fallback. */
   readonly deepcorePools?: readonly { readonly client: PublicClient; readonly pool: MarketPool }[];
   readonly now?: number;
@@ -565,6 +592,7 @@ export async function onchainPrice(a: OnchainPriceArgs): Promise<OnchainPrice> {
     sellUsd: null,
     spreadBps: null,
     probeUsd,
+    depth: null,
     venue: null,
     blockNumber: null,
     via: null,
@@ -598,6 +626,34 @@ export async function onchainPrice(a: OnchainPriceArgs): Promise<OnchainPrice> {
       }
     }
     const p = executablePrices(buy, sell, leg, a.tokenDecimals);
+    const multiple = a.depthMultiple ?? PREMIUM_DEPTH_MULTIPLE;
+    let depth: OnchainPrice["depth"] = null;
+    if (p.buyUsd !== null && p.sellUsd !== null && buy && multiple > 1 && Number.isInteger(multiple)) {
+      const m = BigInt(multiple);
+      const depthReasons: string[] = [];
+      let bigBuy: PremiumQuoteRead | null = null;
+      let bigSell: PremiumQuoteRead | null = null;
+      try {
+        bigBuy = await a.quote({ tokenIn: leg.token, tokenOut: token, amountIn: stableIn * m });
+        if (bigBuy.amountOut === 0n) { bigBuy = null; depthReasons.push(`no fill for a buy of ${multiple}x the probe`); }
+      } catch (err) {
+        depthReasons.push(`buy at ${multiple}x: ${errText(err)}`);
+      }
+      try {
+        bigSell = await a.quote({ tokenIn: token, tokenOut: leg.token, amountIn: buy.amountOut * m });
+        if (bigSell.amountOut === 0n) { bigSell = null; depthReasons.push(`no fill for a sell of ${multiple}x the probe`); }
+      } catch (err) {
+        depthReasons.push(`sell at ${multiple}x: ${errText(err)}`);
+      }
+      const d = executablePrices(bigBuy, bigSell, leg, a.tokenDecimals);
+      depth = {
+        multiple,
+        buyUsd: d.buyUsd,
+        sellUsd: d.sellUsd,
+        moveBps: d.buyUsd !== null && d.sellUsd !== null ? depthMoveBps(p.buyUsd, p.sellUsd, d.buyUsd, d.sellUsd) : null,
+        reason: depthReasons.length > 0 ? depthReasons.join("; ") : null,
+      };
+    }
     if (p.usd !== null) {
       const kind = p.buyUsd !== null && p.sellUsd !== null ? "executable-mid" : p.buyUsd !== null ? "executable-buy" : "executable-sell";
       const q = buy ?? sell!;
@@ -612,6 +668,7 @@ export async function onchainPrice(a: OnchainPriceArgs): Promise<OnchainPrice> {
         sellUsd: p.sellUsd,
         spreadBps: p.spreadBps,
         probeUsd,
+        depth,
         venue,
         blockNumber: q.blockNumber === null ? null : q.blockNumber.toString(),
         via: leg,
@@ -664,9 +721,22 @@ export interface StockPremium {
   readonly uncertaintyBps: number;
 }
 
+/**
+ * How far the depth-size prices moved from the probe-size prices, the larger side, in bps (>= 0).
+ * A bigger buy pays more per token and a bigger sell gets less; a move the other way (rounding,
+ * a better tier at size) counts by its size too, so an odd quote is never waved through. Pure.
+ */
+export function depthMoveBps(buyUsd: number, sellUsd: number, depthBuyUsd: number, depthSellUsd: number): number {
+  const b = Math.abs(depthBuyUsd / buyUsd - 1);
+  const s = Math.abs(depthSellUsd / sellUsd - 1);
+  return Math.round(Math.max(b, s) * 10_000);
+}
+
 export interface PremiumOptions {
   readonly now?: number;
   readonly maxSpreadBps?: number;
+  /** Refuse as too thin above this depth move. Default `PREMIUM_MAX_DEPTH_MOVE_BPS`. */
+  readonly maxDepthMoveBps?: number;
   readonly maxOnchainAgeSeconds?: number;
 }
 
@@ -697,6 +767,16 @@ export function premium(ref: ReferencePrice, onchain: OnchainPrice, opts: Premiu
   if (onchain.kind === "executable-buy" || onchain.kind === "executable-sell") return refuse("onchain-one-sided", onchain.reason);
   if (onchain.spreadBps !== null && Math.abs(onchain.spreadBps) > (opts.maxSpreadBps ?? PREMIUM_MAX_SPREAD_BPS)) {
     return refuse("onchain-spread-too-wide", `buy ${onchain.buyUsd} / sell ${onchain.sellUsd}: spread ${onchain.spreadBps} bps`);
+  }
+  /* Depth: a price that a trade a few times the probe moves by more than the bound is not a market
+     price. A depth check that could not be completed refuses too: thinness unconfirmed is not depth. */
+  const depth = onchain.depth;
+  if (onchain.kind === "executable-mid" && depth) {
+    const limit = opts.maxDepthMoveBps ?? PREMIUM_MAX_DEPTH_MOVE_BPS;
+    if (depth.moveBps === null) return refuse("onchain-too-thin", `the ${depth.multiple}x depth quote could not be completed: ${depth.reason ?? "no fill"}`);
+    if (depth.moveBps > limit) {
+      return refuse("onchain-too-thin", `at ${depth.multiple}x the probe the price moves ${depth.moveBps} bps (limit ${limit}): buy ${depth.buyUsd} / sell ${depth.sellUsd}`);
+    }
   }
   const bps = Math.round((onchain.usd / ref.usd - 1) * 10_000);
   return {

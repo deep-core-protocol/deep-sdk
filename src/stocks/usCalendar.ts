@@ -89,6 +89,13 @@ export const US_EQUITY_CALENDAR: Readonly<Record<number, UsEquityCalendarYear>> 
   },
 };
 
+/**
+ * The last New York date the calendar covers ("YYYY-12-31" of the last listed year). Past it every
+ * session reads `calendarCovered: false` and the premium tracker refuses with "calendar-unknown"
+ * until the next year is transcribed from the exchange's own list. A test fails 60 days before it.
+ */
+export const US_EQUITY_CALENDAR_LAST_DATE: string = `${Math.max(...Object.keys(US_EQUITY_CALENDAR).map(Number))}-12-31`;
+
 export type UsEquitySessionState = "overnight" | "pre" | "open" | "after" | "closed" | "holiday";
 
 export interface UsEquitySession {
